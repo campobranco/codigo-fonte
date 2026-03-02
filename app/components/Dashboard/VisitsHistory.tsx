@@ -2,7 +2,21 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/app/context/AuthContext";
-import { supabase } from "@/lib/supabase";
+import {
+    doc,
+    getDoc,
+    getDocs,
+    collection,
+    query,
+    where,
+    orderBy,
+    limit,
+    deleteDoc,
+    updateDoc,
+    serverTimestamp,
+    documentId
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import {
     History,
     Calendar,
@@ -46,18 +60,12 @@ export default function VisitsHistory({ scope = 'all', showViewAll = true }: { s
     const fetchVisits = useCallback(async () => {
         setLoading(true);
         try {
-            // 1. Get Visits from Supabase with Joins
-            // Realizamos o JOIN direto no banco para evitar múltiplas chamadas (N+1 queries)
-            // addresses(street) e users(name) trazem os dados relacionados
-            let query = supabase.from('visits').select(`
-                id, address_id, user_id, congregation_id, visit_date, status, notes,
-                addresses (street),
-                users (name)
-            `);
+            const visitsRef = collection(db, 'visits');
+            let q = query(visitsRef, orderBy('visitDate', 'desc'), limit(showViewAll ? 20 : 100));
 
             if (role !== 'ADMIN') {
                 if (congregationId) {
-                    query = query.eq('congregation_id', congregationId);
+                    q = query(visitsRef, where('congregationId', '==', congregationId), orderBy('visitDate', 'desc'), limit(showViewAll ? 20 : 100));
                 } else {
                     setVisits([]);
                     setLoading(false);
@@ -65,36 +73,69 @@ export default function VisitsHistory({ scope = 'all', showViewAll = true }: { s
                 }
             }
 
-            // Aplicamos o filtro de escopo antes do limite se possível, 
-            // mas como o filtro de escopo depende de lógica do usuário, mantemos o limite um pouco maior
-            query = query.order('visit_date', { ascending: false }).limit(showViewAll ? 20 : 100);
+            const querySnapshot = await getDocs(q);
+            const rawVisits = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-            const { data: rawVisitsData, error } = await query;
-            if (error) throw error;
-            const rawVisits = rawVisitsData || [];
-
-            // 2. Filter logic for non-admins (Scoped results)
-            const filteredVisits = rawVisits.filter(v => {
-                if (scope === 'mine' && v.user_id !== user?.id) return false;
+            // 2. Filter logic (Scope)
+            const filteredVisits = rawVisits.filter((v: any) => {
+                const visitUserId = v.userId || v.user_id;
+                if (scope === 'mine' && visitUserId !== user?.uid) return false;
                 if (scope === 'all' && role !== 'ADMIN' && !isElder && !isServant) {
-                    if (v.user_id !== user?.id) return false;
+                    if (visitUserId !== user?.uid) return false;
                 }
                 return true;
             });
 
-            // 3. Transform and Merge
+            // 3. Fetch Related Names manually
+            const addressIds = Array.from(new Set(filteredVisits.map((v: any) => v.addressId || v.address_id).filter(id => !!id)));
+            const userIds = Array.from(new Set(filteredVisits.map((v: any) => v.userId || v.user_id).filter(id => !!id)));
+
+            const addressMap: Record<string, string> = {};
+            const userMap: Record<string, string> = {};
+
+            // Fetch addresses (limite de 30 para 'in' no firestore)
+            if (addressIds.length > 0) {
+                const chunkedAddressIds = [];
+                for (let i = 0; i < addressIds.length; i += 30) {
+                    chunkedAddressIds.push(addressIds.slice(i, i + 30));
+                }
+
+                await Promise.all(chunkedAddressIds.map(async (chunk) => {
+                    // Usamos documentId() para buscar pelos IDs reais dos documentos
+                    const qAddr = query(collection(db, 'addresses'), where(documentId(), 'in', chunk));
+                    const addrSnap = await getDocs(qAddr);
+                    addrSnap.forEach(docSnap => addressMap[docSnap.id] = docSnap.data().street);
+                }));
+            }
+
+            // Fetch users
+            if (userIds.length > 0) {
+                const chunkedUserIds = [];
+                for (let i = 0; i < userIds.length; i += 30) {
+                    chunkedUserIds.push(userIds.slice(i, i + 30));
+                }
+
+                await Promise.all(chunkedUserIds.map(async (chunk) => {
+                    const qUser = query(collection(db, 'users'), where(documentId(), 'in', chunk));
+                    const userSnap = await getDocs(qUser);
+                    userSnap.forEach(docSnap => userMap[docSnap.id] = docSnap.data().name);
+                }));
+            }
+
             const mergedVisits = filteredVisits.map((v: any) => {
+                const addressId = v.addressId || v.address_id;
+                const userId = v.userId || v.user_id;
+                const visitDate = v.visitDate || v.visit_date;
+
                 return {
                     ...v,
-                    // Dados vindos do join estão em objetos aninhados
-                    addressStreet: v.addresses?.street || 'Localização não identificada',
-                    displayName: v.users?.name || 'Publicador',
-                    sortDate: v.visit_date ? new Date(v.visit_date) : new Date(0),
+                    addressStreet: addressMap[addressId] || 'Localização não identificada',
+                    displayName: userMap[userId] || 'Publicador',
+                    sortDate: visitDate?.toDate ? visitDate.toDate() : (visitDate ? new Date(visitDate) : new Date(0)),
                     observations: v.notes || ''
                 };
             });
 
-            // Only slice if we are in "Preview" mode on the dashboard
             if (showViewAll) {
                 setVisits(mergedVisits.slice(0, 4));
             } else {
@@ -107,7 +148,7 @@ export default function VisitsHistory({ scope = 'all', showViewAll = true }: { s
         } finally {
             setLoading(false);
         }
-    }, [congregationId, isElder, isServant, role, user?.id, scope, showViewAll]);
+    }, [congregationId, isElder, isServant, role, user?.uid, scope, showViewAll]);
 
     // Timeout for safety
     useEffect(() => {
@@ -158,8 +199,8 @@ export default function VisitsHistory({ scope = 'all', showViewAll = true }: { s
             onConfirm: async () => {
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
                 try {
-                    const { error } = await supabase.from('visits').delete().eq('id', visit.id);
-                    if (error) throw error;
+                    const visitRef = doc(db, 'visits', visit.id);
+                    await deleteDoc(visitRef);
 
                     // Remove from state
                     setVisits(prev => prev.filter(v => v.id !== visit.id));
@@ -187,12 +228,12 @@ export default function VisitsHistory({ scope = 'all', showViewAll = true }: { s
 
     const saveEdit = async (visit: any) => {
         try {
-            const { error } = await supabase.from('visits').update({
+            const visitRef = doc(db, 'visits', visit.id);
+            await updateDoc(visitRef, {
                 notes: editForm.observations,
-                status: editForm.status
-            }).eq('id', visit.id);
-
-            if (error) throw error;
+                status: editForm.status,
+                updatedAt: serverTimestamp()
+            });
 
             // Update State
             setVisits(prev => prev.map(v => {

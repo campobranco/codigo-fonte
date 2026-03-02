@@ -23,6 +23,7 @@ import {
     Lightbulb,
     X,
     Plus,
+    Loader2
 } from "lucide-react";
 import { getServiceYear, getServiceYearLabel, getServiceYearRange } from "@/lib/serviceYearUtils";
 import { db } from "@/lib/firebase";
@@ -349,16 +350,36 @@ export default function ReportsPage() {
 
             <main className="max-w-4xl mx-auto p-6 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 {error && (
-                    <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4 rounded-lg flex items-start gap-3 animate-in zoom-in-95">
-                        <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                    <div className={`border p-4 rounded-lg flex items-start gap-3 animate-in zoom-in-95 ${error.includes('building') ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'}`}>
+                        {error.includes('building') ? (
+                            <Loader2 className="w-5 h-5 text-blue-500 shrink-0 mt-0.5 animate-spin" />
+                        ) : (
+                            <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                        )}
                         <div>
-                            <h3 className="font-bold text-red-800 dark:text-red-400 text-sm">Erro de Dados</h3>
-                            <p className="text-red-600 dark:text-red-500 text-xs mt-1">
-                                {error}
+                            <h3 className={`font-bold text-sm ${error.includes('building') ? 'text-blue-800 dark:text-blue-400' : 'text-red-800 dark:text-red-400'}`}>
+                                {error.includes('building') ? 'Preparando Banco de Dados' : 'Erro de Dados'}
+                            </h3>
+                            <p className={`text-xs mt-1 break-all ${error.includes('building') ? 'text-blue-600 dark:text-blue-500' : 'text-red-600 dark:text-red-500'}`}>
+                                {error?.includes('https://') ? (
+                                    <>
+                                        {error.includes('building') ? 'O Firebase está criando um índice necessário para esta consulta. Isso pode levar alguns minutos.' : error.split('https://')[0]}
+                                        <a
+                                            href={`https://${error.split('https://')[1]}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className={`underline font-extrabold transition-colors block mt-2 p-2 rounded border ${error.includes('building') ? 'bg-blue-500/10 border-blue-500/20 hover:text-blue-800' : 'bg-red-500/10 border-red-500/20 hover:text-red-800'}`}
+                                        >
+                                            {error.includes('building') ? 'Ver progresso no Firebase Console' : 'Clique aqui para criar o índice no Firebase Console'}
+                                        </a>
+                                    </>
+                                ) : error}
                             </p>
-                            <p className="text-red-500 dark:text-red-400 text-[10px] mt-2 leading-relaxed">
-                                Isso pode ocorrer se o esquema do banco de dados estiver incompleto. Certifique-se de aplicar todos os scripts SQL pendentes (v6, v7, v8) no Supabase.
-                            </p>
+                            {!error.includes('building') && (
+                                <p className="text-red-500 dark:text-red-400 text-[10px] mt-2 leading-relaxed">
+                                    Isso pode ocorrer se o esquema do banco de dados estiver incompleto ou se uma consulta exigir um índice composto que ainda não foi criado no Firebase Console.
+                                </p>
+                            )}
                         </div>
                     </div>
                 )}

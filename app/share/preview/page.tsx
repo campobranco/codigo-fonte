@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, Suspense, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
 import {
     Map as MapIcon,
     Loader2,
@@ -226,7 +225,7 @@ function SharedPreviewContent() {
             const visitData = {
                 address_id: selectedAddressForReport.id,
                 territory_id: selectedAddressForReport.territoryId,
-                user_id: user?.id || null,
+                user_id: user?.uid || null,
                 status: data.status,
                 notes: data.observations || '',
                 visit_date: visit_date,

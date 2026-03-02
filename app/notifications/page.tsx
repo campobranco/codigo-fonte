@@ -2,7 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/app/context/AuthContext";
-import { supabase } from "@/lib/supabase";
+import {
+    collection,
+    query,
+    where,
+    getDocs,
+    doc,
+    getDoc,
+    limit
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import { ArrowLeft } from "lucide-react";
 import { useRouter } from 'next/navigation';
 import ActionCenter, { IdleTerritory } from "@/app/components/Dashboard/ActionCenter";
@@ -22,26 +31,28 @@ export default function NotificationsPage() {
         if (!user) return;
         const fetchAssignments = async () => {
             try {
-                const { data: lists, error } = await supabase
-                    .from('shared_lists')
-                    .select('*')
-                    .eq('assigned_to', user.id)
-                    .not('status', 'in', '(\'completed\',\'archived\')');
+                const listsRef = collection(db, 'shared_lists');
+                const q = query(
+                    listsRef,
+                    where('assignedTo', '==', user.uid)
+                );
 
-                if (error) throw error;
-                if (!lists) return;
+                const querySnapshot = await getDocs(q);
+                const lists = querySnapshot.docs
+                    .map(doc => ({ id: doc.id, ...doc.data() }))
+                    .filter((l: any) => l.status !== 'completed' && l.status !== 'archived');
 
                 setPendingMapsCount(lists.length);
 
-                const expiring = lists.filter(l => {
-                    if (!l.expires_at) return false;
-                    const expires = new Date(l.expires_at);
+                const expiring = lists.filter((l: any) => {
+                    if (!l.expiresAt && !l.expires_at) return false;
+                    const expires = new Date(l.expiresAt || l.expires_at);
                     const now = new Date();
                     const diffMs = expires.getTime() - now.getTime();
                     const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
                     return diffDays > 0 && diffDays <= 10;
-                }).map(l => {
-                    const expires = new Date(l.expires_at);
+                }).map((l: any) => {
+                    const expires = new Date(l.expiresAt || l.expires_at);
                     const now = new Date();
                     const diffMs = expires.getTime() - now.getTime();
                     const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
@@ -64,22 +75,19 @@ export default function NotificationsPage() {
         const fetchIdleAndCompletion = async () => {
             try {
                 // Fetch Territories - restricted to congregation
-                const { data: territories, error: terrError } = await supabase
-                    .from('territories')
-                    .select('*')
-                    .eq('congregation_id', congregationId);
+                const terrRef = collection(db, 'territories');
+                const qTerr = query(terrRef, where('congregationId', '==', congregationId));
+                const terrSnap = await getDocs(qTerr);
+                const territories = terrSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-                if (terrError) throw terrError;
-                const mapsCount = territories?.length || 0;
+                const mapsCount = territories.length || 0;
 
-                if (mapsCount > 0 && territories) {
+                if (mapsCount > 0) {
                     // 1. Get ALL shared lists history - restricted to congregation
-                    const { data: history, error: histError } = await supabase
-                        .from('shared_lists')
-                        .select('*')
-                        .eq('congregation_id', congregationId);
-
-                    if (histError) throw histError;
+                    const listsRef = collection(db, 'shared_lists');
+                    const qLists = query(listsRef, where('congregationId', '==', congregationId));
+                    const listsSnap = await getDocs(qLists);
+                    const history = listsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
 
                     // Map History Dates
                     const latestActivityMap = new Map<string, number>();
@@ -87,8 +95,17 @@ export default function NotificationsPage() {
 
                     history?.forEach(item => {
                         const datesToCheck: number[] = [];
-                        if (item.created_at) datesToCheck.push(new Date(item.created_at).getTime());
-                        if (item.returned_at) datesToCheck.push(new Date(item.returned_at).getTime());
+                        const createdAt = item.createdAt || item.created_at;
+                        const returnedAt = item.returnedAt || item.returned_at;
+
+                        if (createdAt) {
+                            const d = createdAt.toDate ? createdAt.toDate().getTime() : new Date(createdAt).getTime();
+                            datesToCheck.push(d);
+                        }
+                        if (returnedAt) {
+                            const d = returnedAt.toDate ? returnedAt.toDate().getTime() : new Date(returnedAt).getTime();
+                            datesToCheck.push(d);
+                        }
 
                         const maxDate = datesToCheck.length > 0 ? Math.max(...datesToCheck) : 0;
 
@@ -98,13 +115,14 @@ export default function NotificationsPage() {
                         };
 
                         // Support both single territory and collections (items array)
-                        if (item.territory_id) updateMap(item.territory_id);
+                        const tId = item.territoryId || item.territory_id;
+                        if (tId) updateMap(tId);
                         if (item.items && Array.isArray(item.items)) {
                             item.items.forEach((id: string) => updateMap(id));
                         }
 
                         if (item.status === 'completed') {
-                            if (item.territory_id) workedMapIds.add(item.territory_id);
+                            if (tId) workedMapIds.add(tId);
                             if (item.items && Array.isArray(item.items)) {
                                 item.items.forEach((id: string) => workedMapIds.add(id));
                             }
@@ -112,13 +130,15 @@ export default function NotificationsPage() {
                     });
 
                     // Fetch Cities for names - restricted to congregation
-                    const { data: cities } = await supabase
-                        .from('cities')
-                        .select('id, name')
-                        .eq('congregation_id', congregationId);
+                    const citiesRef = collection(db, 'cities');
+                    const qCities = query(citiesRef, where('congregationId', '==', congregationId));
+                    const citiesSnap = await getDocs(qCities);
 
                     const cityMap: Record<string, string> = {};
-                    cities?.forEach(c => { if (c.name) cityMap[c.id] = c.name; });
+                    citiesSnap.docs.forEach(docSnap => {
+                        const c = docSnap.data();
+                        if (c.name) cityMap[docSnap.id] = c.name;
+                    });
 
                     const now = new Date();
                     const oneYearAgo = new Date();
@@ -126,12 +146,12 @@ export default function NotificationsPage() {
 
                     const idleList: any[] = [];
 
-                    territories.forEach(t => {
+                    territories.forEach((t: any) => {
                         if (t.status === 'ASSIGNED' || t.status === 'OCUPADO') return;
 
                         const historyActivity = latestActivityMap.get(t.id) || 0;
                         const lastActivityDate = historyActivity > 0 ? new Date(historyActivity) : null;
-                        const cityName = cityMap[t.city_id] || t.city || 'Cidade Desconhecida';
+                        const cityName = cityMap[t.cityId || t.city_id] || t.city || 'Cidade Desconhecida';
 
                         if (!lastActivityDate) {
                             idleList.push({
@@ -139,8 +159,8 @@ export default function NotificationsPage() {
                                 name: t.name || 'Sem Nome',
                                 description: t.notes || '',
                                 city: cityName,
-                                cityId: t.city_id,
-                                congregationId: t.congregation_id,
+                                cityId: t.cityId || t.city_id,
+                                congregationId: t.congregationId || t.congregation_id,
                                 lastVisit: null,
                                 variant: 'danger'
                             });
@@ -150,8 +170,8 @@ export default function NotificationsPage() {
                                 name: t.name || 'Sem Nome',
                                 description: t.notes || '',
                                 city: cityName,
-                                cityId: t.city_id,
-                                congregationId: t.congregation_id,
+                                cityId: t.cityId || t.city_id,
+                                congregationId: t.congregationId || t.congregation_id,
                                 lastVisit: lastActivityDate,
                                 variant: 'warning'
                             });

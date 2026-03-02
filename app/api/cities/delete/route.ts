@@ -1,15 +1,15 @@
-import { supabaseAdmin } from '@/lib/supabase-admin';
+// app/api/cities/delete/route.ts
+// API para exclusão de cidades no Firestore
+// Migrado de Supabase para Firebase Admin SDK
+
+import { adminDb } from '@/lib/firebase-admin';
 import { NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase-server';
+import { requireAuth } from '@/lib/auth';
 
 export async function POST(req: Request) {
     try {
-        const supabase = await createServerClient();
-        const { data: { user: currentUser }, error: authError } = await supabase.auth.getUser();
-
-        if (authError || !currentUser) {
-            return NextResponse.json({ error: 'Sessão expirada' }, { status: 401 });
-        }
+        // Verifica autenticação e permissões (Ancião ou de maior nível)
+        const user = await requireAuth(['ANCIAO', 'SERVO', 'ADMIN']);
 
         const body = await req.json();
         const { id } = body;
@@ -18,46 +18,30 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'ID é obrigatório.' }, { status: 400 });
         }
 
-        // Verificar permissões do administrador
-        const { data: adminData } = await supabase
-            .from('users')
-            .select('role, congregation_id')
-            .eq('id', currentUser.id)
-            .single();
+        // Busca a cidade alvo para verificar congregação
+        const cityRef = adminDb.collection('cities').doc(id);
+        const cityDoc = await cityRef.get();
 
-        if (!adminData || (adminData.role !== 'ADMIN' && adminData.role !== 'ANCIAO' && adminData.role !== 'SERVO')) {
-            return NextResponse.json({ error: 'Você não tem permissão para esta ação.' }, { status: 403 });
-        }
-
-        // Obter cidade alvo para verificar congregação
-        const { data: cityData } = await supabaseAdmin
-            .from('cities')
-            .select('congregation_id')
-            .eq('id', id)
-            .single();
-
-        if (!cityData) {
+        if (!cityDoc.exists) {
             return NextResponse.json({ error: 'Registro não encontrado.' }, { status: 404 });
         }
 
+        const cityData = cityDoc.data();
+
         // Se for Ancião/Servo, só pode deletar da própria congregação
-        if (adminData.role !== 'ADMIN' && cityData.congregation_id !== adminData.congregation_id) {
+        if (user.role !== 'ADMIN' && cityData?.congregationId !== user.congregationId) {
             return NextResponse.json({ error: 'Você só pode excluir itens da sua congregação.' }, { status: 403 });
         }
 
-        const { error: publicDeleteError } = await supabaseAdmin
-            .from('cities')
-            .delete()
-            .eq('id', id);
-
-        if (publicDeleteError) {
-            console.error('City Delete API Error:', publicDeleteError);
-            return NextResponse.json({ error: publicDeleteError.message }, { status: 500 });
-        }
+        // Exclui do Firestore
+        await cityRef.delete();
 
         return NextResponse.json({ success: true });
     } catch (error: any) {
-        console.error('City Delete API Critical Error:', error);
+        if (error.message === 'Unauthorized') return NextResponse.json({ error: 'Sessão expirada' }, { status: 401 });
+        if (error.message === 'Forbidden') return NextResponse.json({ error: 'Permissão negada' }, { status: 403 });
+
+        console.error('[CITIES_DELETE] API Critical Error:', error);
         return NextResponse.json({ error: 'Erro interno no servidor' }, { status: 500 });
     }
 }

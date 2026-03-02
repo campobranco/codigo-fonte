@@ -3,7 +3,19 @@
 import { Suspense, useEffect, useState, useCallback } from "react";
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useAuth } from "@/app/context/AuthContext";
-import { supabase } from "@/lib/supabase";
+import {
+    collection,
+    query,
+    where,
+    getDocs,
+    doc,
+    updateDoc,
+    limit,
+    orderBy,
+    serverTimestamp,
+    writeBatch
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import Link from 'next/link';
 import BottomNav from "@/app/components/BottomNav";
 import {
@@ -60,24 +72,24 @@ function CardsContent() {
         setLoading(true);
 
         try {
-            let query = supabase.from("shared_lists").select("*");
+            const listsRef = collection(db, "shared_lists");
+            let q;
 
             // SCOPE: MINE
             if (scope === 'mine') {
-                query = query.eq("assigned_to", user.uid);
+                q = query(listsRef, where("assigned_to", "==", user.uid));
             }
             // SCOPE: MANAGED (Sent/All)
             else if (scope === 'managed') {
                 if (role !== 'ADMIN' && congregationId) {
-                    query = query.eq("congregation_id", congregationId);
+                    q = query(listsRef, where("congregationId", "==", congregationId));
                 } else if (role !== 'ADMIN') {
                     setLists([]);
                     setLoading(false);
                     return;
-                }
-                // Admin sees all, limited for safety
-                if (role === 'ADMIN') {
-                    query = query.limit(100);
+                } else {
+                    // Admin sees all, limited for safety
+                    q = query(listsRef, limit(100));
                 }
             } else {
                 setLists([]);
@@ -85,19 +97,17 @@ function CardsContent() {
                 return;
             }
 
-            const { data, error } = await query;
-            if (error) throw error;
+            const querySnapshot = await getDocs(q);
+            const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-            let rawLists: any[] = (data || []).map(item => ({
+            let rawLists: any[] = (data || []).map((item: any) => ({
                 ...item,
-                assignedTo: item.assigned_to,
-                assignedName: item.assigned_name,
-                congregationId: item.congregation_id,
-                createdAt: item.created_at,
-                expiresAt: item.expires_at,
-                // MINE: responsible is 'Você'
-                // MANAGED: use assignedName or 'Não atribuído'
-                responsibleName: scope === 'mine' ? 'Você' : (item.assigned_name || (item.assigned_to ? 'Usuário' : 'Não atribuído'))
+                assignedTo: item.assigned_to || item.assignedTo,
+                assignedName: item.assigned_name || item.assignedName,
+                congregationId: item.congregation_id || item.congregationId,
+                createdAt: item.created_at || item.createdAt,
+                expiresAt: item.expires_at || item.expiresAt,
+                responsibleName: scope === 'mine' ? 'Você' : (item.assignedName || item.assigned_name || (item.assignedTo || item.assigned_to ? 'Usuário' : 'Não atribuído'))
             }));
 
             // Filter for Publisher in Managed View
@@ -106,21 +116,21 @@ function CardsContent() {
                 rawLists = rawLists.filter(l => l.assignedName === userName || l.assignedTo === user.uid);
             }
 
-            // Only show active active ones for 'mine'
+            // Only show active ones for 'mine'
             if (scope === 'mine') {
                 rawLists = rawLists.filter(l => l.status !== 'completed' && l.status !== 'archived');
             }
 
             // Sort
             rawLists.sort((a, b) => {
-                // Active first
-                const isAActive = a.status !== 'completed';
-                const isBActive = b.status !== 'completed';
+                const isAActive = a.status !== 'completed' && a.status !== 'archived';
+                const isBActive = b.status !== 'completed' && b.status !== 'archived';
                 if (isAActive && !isBActive) return -1;
                 if (!isAActive && isBActive) return 1;
 
-                // Then Date Newest
-                return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+                const dateA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : new Date(a.createdAt || 0).getTime();
+                const dateB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : new Date(b.createdAt || 0).getTime();
+                return dateB - dateA;
             });
 
             setLists(rawLists);
@@ -201,11 +211,14 @@ function CardsContent() {
     const handleRemoveResponsible = async (id: string) => {
         setConfirmModal(null);
         try {
-            const { error } = await supabase.from("shared_lists").update({
+            const listRef = doc(db, "shared_lists", id);
+            await updateDoc(listRef, {
                 assigned_to: null,
-                assigned_name: null
-            }).eq("id", id);
-            if (error) throw error;
+                assignedTo: null,
+                assigned_name: null,
+                assignedName: null,
+                updatedAt: serverTimestamp()
+            });
             fetchLists();
             toast.success("Responsável removido.");
         } catch (err) {
@@ -246,11 +259,19 @@ function CardsContent() {
         setConfirmModal(null);
         setLoading(true);
         try {
-            const { error } = await supabase.from("shared_lists").update({
-                assigned_to: null,
-                assigned_name: null
-            }).in("id", selectedIds);
-            if (error) throw error;
+            const batch = writeBatch(db);
+            selectedIds.forEach(id => {
+                const listRef = doc(db, "shared_lists", id);
+                batch.update(listRef, {
+                    assigned_to: null,
+                    assignedTo: null,
+                    assigned_name: null,
+                    assignedName: null,
+                    updatedAt: serverTimestamp()
+                });
+            });
+            await batch.commit();
+
             fetchLists();
             setSelectedIds([]);
             setIsSelectionMode(false);

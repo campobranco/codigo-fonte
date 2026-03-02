@@ -1,12 +1,20 @@
-"use client";
-
 import { useEffect, useState, Suspense } from 'react';
 import { useAuth } from '@/app/context/AuthContext';
-import { supabase } from '@/lib/supabase';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Users, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import ConfirmationModal from '@/app/components/ConfirmationModal';
+import { db } from '@/lib/firebase';
+import {
+    collection,
+    query,
+    where,
+    getDocs,
+    doc,
+    getDoc,
+    setDoc,
+    serverTimestamp
+} from 'firebase/firestore';
 
 function InviteContent() {
     const searchParams = useSearchParams();
@@ -53,21 +61,27 @@ function InviteContent() {
 
             try {
                 // 1. Validate Token & Get Congregation
-                const { data, error: congError } = await supabase
-                    .from("congregations")
-                    .select("*")
-                    .eq("invite_token", token)
-                    .single();
+                const congRef = collection(db, "congregations");
 
-                if (congError || !data) {
+                // Busca por inviteToken (novo padrão) ou invite_token (legado)
+                let q = query(congRef, where("inviteToken", "==", token));
+                let querySnapshot = await getDocs(q);
+
+                if (querySnapshot.empty) {
+                    q = query(congRef, where("invite_token", "==", token));
+                    querySnapshot = await getDocs(q);
+                }
+
+                if (querySnapshot.empty) {
                     setError("Link de convite inválido ou expirado.");
                     setCongregationName("Convite Inválido");
                     setLoading(false);
                     return;
                 }
 
-                setCongregationId(data.id);
-                setCongregationName(data.name || "Congregação sem nome");
+                const congData = querySnapshot.docs[0].data();
+                setCongregationId(querySnapshot.docs[0].id);
+                setCongregationName(congData.name || "Congregação sem nome");
                 setLoading(false);
 
             } catch (err) {
@@ -83,6 +97,31 @@ function InviteContent() {
 
         checkInvite();
     }, [token, user, authLoading]);
+
+    const proceedWithAccept = async () => {
+        if (!congregationId || !user) return;
+        setAccepting(true);
+        try {
+            // Update User in Firestore
+            const userRef = doc(db, 'users', user.uid);
+            await setDoc(userRef, {
+                congregationId: congregationId,
+                role: 'PUBLICADOR',
+                updatedAt: serverTimestamp(),
+                email: user.email,
+                name: profileName || user.email?.split('@')[0]
+            }, { merge: true });
+
+            setSuccess(true);
+            // Force refresh to ensure AuthContext picks up the change
+            setTimeout(() => window.location.href = '/dashboard', 2000);
+
+        } catch (e) {
+            console.error("Error accepting invite:", e);
+            toast.error("Erro ao aceitar convite.");
+            setAccepting(false);
+        }
+    };
 
     const handleAccept = async () => {
         if (!user) {
@@ -103,32 +142,34 @@ function InviteContent() {
         setAccepting(true);
         try {
             // Check if user already has a congregation
-            const { data: userData, error: userError } = await supabase
-                .from("users")
-                .select("congregation_id")
-                .eq("id", user.id)
-                .single();
+            const userRef = doc(db, 'users', user.uid);
+            const userSnap = await getDoc(userRef);
 
-            if (userData && userData.congregation_id) {
-                // Already bound logic
-                if (userData.congregation_id === congregationId) {
-                    setSuccess(true);
-                    // Force refresh to ensure AuthContext picks up the change
-                    setTimeout(() => window.location.href = '/dashboard', 2000);
-                    return;
-                } else {
-                    setConfirmModal({
-                        isOpen: true,
-                        title: "Mudar de Congregação",
-                        message: "Você já pertence a outra congregação. Deseja mudar para esta?",
-                        variant: 'info',
-                        onConfirm: () => {
-                            setConfirmModal(prev => ({ ...prev, isOpen: false }));
-                            proceedWithAccept();
-                        }
-                    });
-                    setAccepting(false); // Stop loader while waiting for confirmation
-                    return;
+            if (userSnap.exists()) {
+                const userData = userSnap.data();
+                const currentCongId = userData.congregationId || userData.congregation_id;
+
+                if (currentCongId) {
+                    // Already bound logic
+                    if (currentCongId === congregationId) {
+                        setSuccess(true);
+                        // Force refresh to ensure AuthContext picks up the change
+                        setTimeout(() => window.location.href = '/dashboard', 2000);
+                        return;
+                    } else {
+                        setConfirmModal({
+                            isOpen: true,
+                            title: "Mudar de Congregação",
+                            message: "Você já pertence a outra congregação. Deseja mudar para esta?",
+                            variant: 'info',
+                            onConfirm: () => {
+                                setConfirmModal(prev => ({ ...prev, isOpen: false }));
+                                proceedWithAccept();
+                            }
+                        });
+                        setAccepting(false); // Stop loader while waiting for confirmation
+                        return;
+                    }
                 }
             }
 
@@ -138,35 +179,6 @@ function InviteContent() {
         } catch (e) {
             console.error("Error checking user congregation:", e);
             toast.error("Erro ao verificar dados do usuário.");
-            setAccepting(false);
-        }
-    };
-
-    const proceedWithAccept = async () => {
-        if (!congregationId || !user) return;
-        setAccepting(true);
-        try {
-            // Update User
-            const { error: updateError } = await supabase
-                .from("users")
-                .upsert({
-                    id: user.id,
-                    congregation_id: congregationId,
-                    role: 'PUBLICADOR',
-                    updated_at: new Date().toISOString(),
-                    email: user.email,
-                    name: profileName || user.email?.split('@')[0]
-                });
-
-            if (updateError) throw updateError;
-
-            setSuccess(true);
-            // Force refresh to ensure AuthContext picks up the change
-            setTimeout(() => window.location.href = '/dashboard', 2000);
-
-        } catch (e) {
-            console.error("Error accepting invite:", e);
-            toast.error("Erro ao aceitar convite.");
             setAccepting(false);
         }
     };

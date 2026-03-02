@@ -1,58 +1,51 @@
-import { supabaseAdmin } from '@/lib/supabase-admin';
+// app/api/cities/create/route.ts
+// API para criação de cidades no Firestore
+// Migrado de Supabase para Firebase Admin SDK
+
+import { adminDb } from '@/lib/firebase-admin';
 import { NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase-server';
+import { requireAuth } from '@/lib/auth';
+import { FieldValue } from 'firebase-admin/firestore';
 
 export async function POST(req: Request) {
     try {
-        const supabase = await createServerClient();
-        const { data: { user: currentUser }, error: authError } = await supabase.auth.getUser();
-
-        if (authError || !currentUser) {
-            return NextResponse.json({ error: 'Sessão expirada' }, { status: 401 });
-        }
+        // Verifica autenticação e permissões (Ancião ou de maior nível)
+        const user = await requireAuth(['ANCIAO', 'SERVO', 'ADMIN']);
 
         const body = await req.json();
-        const { name, uf, congregation_id, parent_city, lat, lng } = body;
+        const { name, uf, congregationId, congregation_id, parentCity, parent_city, lat, lng } = body;
 
-        if (!name || !congregation_id) {
+        // Suporta tanto camelCase quanto snake_case do corpo da requisição
+        const cId = congregationId || congregation_id;
+        const pCity = parentCity || parent_city;
+
+        if (!name || !cId) {
             return NextResponse.json({ error: 'Nome e congregação são obrigatórios.' }, { status: 400 });
         }
 
-        // Verificar permissões do administrador
-        const { data: adminData } = await supabase
-            .from('users')
-            .select('role, congregation_id')
-            .eq('id', currentUser.id)
-            .single();
-
-        if (!adminData || (adminData.role !== 'ADMIN' && adminData.role !== 'ANCIAO' && adminData.role !== 'SERVO')) {
-            return NextResponse.json({ error: 'Você não tem permissão para esta ação.' }, { status: 403 });
-        }
-
         // Se for Ancião/Servo, só pode criar para a própria congregação
-        if (adminData.role !== 'ADMIN' && congregation_id !== adminData.congregation_id) {
+        if (user.role !== 'ADMIN' && cId !== user.congregationId) {
             return NextResponse.json({ error: 'Você só pode gerenciar dados da sua congregação.' }, { status: 403 });
         }
 
-        const { data, error: publicInsertError } = await supabaseAdmin
-            .from('cities')
-            .insert([{
-                name,
-                uf,
-                congregation_id,
-                parent_city: parent_city || null,
-                lat: lat || null,
-                lng: lng || null
-            }]);
+        // Inserção no Firestore
+        const docRef = await adminDb.collection('cities').add({
+            name,
+            uf: uf || 'SP',
+            congregationId: cId,
+            parentCity: pCity || null,
+            lat: lat ? Number(lat) : null,
+            lng: lng ? Number(lng) : null,
+            createdAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp()
+        });
 
-        if (publicInsertError) {
-            console.error('City Create API Error:', publicInsertError);
-            return NextResponse.json({ error: publicInsertError.message }, { status: 500 });
-        }
-
-        return NextResponse.json({ success: true });
+        return NextResponse.json({ success: true, id: docRef.id });
     } catch (error: any) {
-        console.error('City Create API Critical Error:', error);
+        if (error.message === 'Unauthorized') return NextResponse.json({ error: 'Sessão expirada' }, { status: 401 });
+        if (error.message === 'Forbidden') return NextResponse.json({ error: 'Permissão negada' }, { status: 403 });
+
+        console.error('[CITIES_CREATE] API Critical Error:', error);
         return NextResponse.json({ error: 'Erro interno no servidor' }, { status: 500 });
     }
 }

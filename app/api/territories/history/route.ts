@@ -1,15 +1,14 @@
-import { supabaseAdmin } from '@/lib/supabase-admin';
+// app/api/territories/history/route.ts
+// API para histórico de territórios no Firestore
+// Migrado de Supabase para Firebase Admin SDK
+
+import { adminDb } from '@/lib/firebase-admin';
 import { NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase-server';
+import { requireAuth } from '@/lib/auth';
 
 export async function GET(req: Request) {
     try {
-        const supabase = await createServerClient();
-        const { data: { user } } = await supabase.auth.getUser();
-
-        if (!user) {
-            return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
-        }
+        const user = await requireAuth();
 
         const { searchParams } = new URL(req.url);
         let congregationId = searchParams.get('congregationId');
@@ -19,35 +18,32 @@ export async function GET(req: Request) {
             return NextResponse.json({ error: 'ID do território não fornecido' }, { status: 400 });
         }
 
-        // Get user profile for verification
-        const { data: profile } = await supabaseAdmin
-            .from('users')
-            .select('role, congregation_id')
-            .eq('id', user.id)
-            .single();
-
-        // Security: Ensure congregationId matches the user's congregation
-        if (profile?.role !== 'ADMIN' || !congregationId) {
-            congregationId = profile?.congregation_id || null;
+        // Segurança: Se não for ADMIN de sistema, usa a congregação do usuário logado
+        if (user.role !== 'ADMIN' || !congregationId) {
+            congregationId = user.congregationId || null;
         }
 
         if (!congregationId) {
-            return NextResponse.json({ error: 'Congregacão não identificada' }, { status: 400 });
+            return NextResponse.json({ error: 'Congregação não identificada' }, { status: 400 });
         }
 
-        // Query shared_lists where the items array contains this territoryId
-        const { data, error } = await supabaseAdmin
-            .from('shared_lists')
-            .select('*')
-            .eq('congregation_id', congregationId)
-            .contains('items', [territoryId])
-            .order('created_at', { ascending: false });
+        // Consulta shared_lists onde o array 'items' contém este territoryId
+        const snapshot = await adminDb.collection('shared_lists')
+            .where('congregationId', '==', congregationId)
+            .where('items', 'array-contains', territoryId)
+            .orderBy('createdAt', 'desc')
+            .get();
 
-        if (error) throw error;
+        const data = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
 
-        return NextResponse.json({ data: data || [] });
+        return NextResponse.json({ data });
     } catch (error: any) {
-        console.error("Territory History API Error:", error);
+        if (error.message === 'Unauthorized') return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+
+        console.error("[TERRITORY_HISTORY] API Error:", error);
         return NextResponse.json({
             error: error.message || 'Erro interno no servidor'
         }, { status: 500 });

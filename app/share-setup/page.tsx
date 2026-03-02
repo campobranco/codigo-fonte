@@ -2,7 +2,15 @@
 
 import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import {
+    doc,
+    getDoc,
+    collection,
+    query,
+    where,
+    getDocs
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import {
     Loader2,
     ArrowLeft,
@@ -96,15 +104,12 @@ function ShareSetupContent() {
                     setTerritories(fetched);
 
                     // Fetch City Name if possible
-                    if (fetched[0].city_id) {
-                        const { data: cityData } = await supabase
-                            .from('cities')
-                            .select('name')
-                            .eq('id', fetched[0].city_id)
-                            .single();
-
-                        if (cityData) {
-                            setCityName(cityData.name);
+                    const cityId = fetched[0].cityId || fetched[0].city_id;
+                    if (cityId) {
+                        const cityRef = doc(db, 'cities', cityId);
+                        const citySnap = await getDoc(cityRef);
+                        if (citySnap.exists()) {
+                            setCityName(citySnap.data().name);
                         }
                     }
                 }
@@ -121,22 +126,21 @@ function ShareSetupContent() {
 
     useEffect(() => {
         let ignore = false;
-        const fetchUsers = async () => {
+        const fetchUsersData = async () => {
             let fetchedUsers: any[] = [];
 
             // 1. Initial members list only with the current user
             if (user) {
                 fetchedUsers.push({
-                    id: user.id,
-                    name: profileName || user.email || 'Eu mesmo',
+                    id: user.uid,
+                    name: profileName || user.displayName || user.email || 'Eu mesmo',
                     email: user.email,
-                    avatar_url: user.user_metadata?.avatar_url || user.user_metadata?.picture || null
+                    avatar_url: user.photoURL || null
                 });
             }
 
             // 2. Fetch congregation members if possible
-            // Use AuthContext congregationId as primary since it's more stable on load
-            const congregationId = authCongregationId || (territories.length > 0 ? territories[0].congregation_id : null);
+            const congregationId = authCongregationId || (territories.length > 0 ? (territories[0].congregationId || territories[0].congregation_id) : null);
 
             if (congregationId) {
                 try {
@@ -144,18 +148,12 @@ function ShareSetupContent() {
                     const json = await response.json();
 
                     if (!ignore && response.ok && json.users) {
-                        const countBefore = fetchedUsers.length;
                         // Merge without duplicates
                         json.users.forEach((apiUser: any) => {
                             if (!fetchedUsers.find(u => u.id === apiUser.id)) {
                                 fetchedUsers.push(apiUser);
                             }
                         });
-
-                        const added = fetchedUsers.length - countBefore;
-                        if (added > 0) {
-                            console.log(`${added} novos membros encontrados para CID: ${congregationId}`);
-                        }
                     }
                 } catch (e) {
                     console.error('Failed to fetch congregation users', e);
@@ -167,7 +165,7 @@ function ShareSetupContent() {
             }
         };
 
-        fetchUsers();
+        fetchUsersData();
         return () => { ignore = true; };
     }, [territories, user, profileName, authCongregationId]);
 
@@ -198,21 +196,21 @@ function ShareSetupContent() {
                 title = `${territories.length} Territórios - ${cityName || territories[0].city || 'Vários'}`;
             }
 
-            // Create shared list in Supabase using the new secure API
+            // Create shared list using the new secure API
             const listData = {
                 type: 'territory',
                 items: territories.map(t => t.id),
-                created_by: user?.id,
-                congregation_id: territories[0].congregation_id,
-                city_id: territories[0].city_id,
-                expires_at: expiresAt ? expiresAt.toISOString() : null,
+                createdBy: user?.uid,
+                congregationId: territories[0].congregationId || territories[0].congregation_id,
+                cityId: territories[0].cityId || territories[0].city_id,
+                expiresAt: expiresAt ? expiresAt.toISOString() : null,
                 status: 'active',
                 title: title,
-                assigned_to: selectedUser ? selectedUser.id : null,
-                assigned_name: selectedUser ? selectedUser.name : null,
+                assignedTo: selectedUser ? selectedUser.id : null,
+                assignedName: selectedUser ? selectedUser.name : null,
                 context: territories.length === 1 ? {
                     territoryId: territories[0].id,
-                    cityId: territories[0].city_id,
+                    cityId: territories[0].cityId || territories[0].city_id,
                     territoryName: territories[0].name || '',
                     cityName: cityName || territories[0].city || '',
                     featuredDetails: cityName || territories[0].city || ''

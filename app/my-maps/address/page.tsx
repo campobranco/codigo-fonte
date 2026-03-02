@@ -41,7 +41,23 @@ import VisitHistoryModal from '@/app/components/VisitHistoryModal';
 import BottomNav from '@/app/components/BottomNav';
 import ConfirmationModal from '@/app/components/ConfirmationModal';
 import MapView, { MapItem } from '@/app/components/MapView';
-import { supabase } from '@/lib/supabase';
+import {
+    doc,
+    getDoc,
+    getDocs,
+    collection,
+    query,
+    where,
+    addDoc,
+    updateDoc,
+    deleteDoc,
+    serverTimestamp,
+    onSnapshot,
+    orderBy,
+    limit,
+    writeBatch
+} from "firebase/firestore";
+import { db } from '@/lib/firebase';
 import Link from 'next/link';
 import { useAuth } from '@/app/context/AuthContext';
 import { getServiceYear, getServiceYearRange } from '@/lib/serviceYearUtils';
@@ -101,21 +117,28 @@ function AddressListContent() {
     useEffect(() => {
         if (!authLoading && user && !isServant && territoryId) {
             const checkAssignment = async () => {
-                const { data, error } = await supabase
-                    .from('shared_lists')
-                    .select('id')
-                    .eq('territory_id', territoryId)
-                    .eq('assigned_to', user.id)
-                    .neq('status', 'completed')
-                    .maybeSingle();
+                try {
+                    const listsRef = collection(db, 'shared_lists');
+                    const q = query(
+                        listsRef,
+                        where('territoryId', '==', territoryId),
+                        where('assignedTo', '==', user.uid),
+                        limit(1)
+                    );
+                    const qSnap = await getDocs(q);
+                    const activeList = qSnap.docs.find(d => d.data().status !== 'completed' && d.data().status !== 'archived');
 
-                if (error || !data) {
-                    toast.error("Você não tem permissão para acessar este mapa ou ele já foi devolvido.");
-                    router.replace('/dashboard');
+                    if (!activeList) {
+                        toast.error("Você não tem permissão para acessar este mapa ou ele já foi devolvido.");
+                        router.replace('/dashboard');
+                    }
+                } catch (e) {
+                    console.error("Check assignment error:", e);
                 }
             };
             checkAssignment();
-        } else if (!authLoading && user && !isServant && !territoryId) {
+        }
+        else if (!authLoading && user && !isServant && !territoryId) {
             router.replace('/dashboard');
         }
     }, [user, authLoading, isServant, territoryId, router]);
@@ -286,23 +309,16 @@ function AddressListContent() {
     useEffect(() => {
         fetchAddresses();
 
-        const subscription = supabase
-            .channel('addresses_list')
-            .on('postgres_changes', {
-                event: '*',
-                schema: 'public',
-                table: 'addresses',
-                filter: `territory_id=eq.${territoryId}`
-            }, () => {
-                fetchAddresses();
-            })
-            .subscribe();
+        if (territoryId) {
+            const addressesRef = collection(db, 'addresses');
+            const q = query(addressesRef, where('territoryId', '==', territoryId));
 
-        return () => {
-            setTimeout(() => {
-                subscription.unsubscribe();
-            }, 100);
-        };
+            const unsubscribe = onSnapshot(q, () => {
+                fetchAddresses();
+            });
+
+            return () => unsubscribe();
+        }
     }, [congregationId, territoryId]);
 
     // Fetch Available Options for Edit Modal
@@ -310,24 +326,34 @@ function AddressListContent() {
         if (!isCreateModalOpen) return;
 
         const fetchOptions = async () => {
-            const { data: cities } = await supabase.from('cities').select('id, name').eq('congregation_id', selectedCongregationId);
-            if (cities) setAvailableCities(cities);
+            try {
+                // Fetch Cities
+                const citiesRef = collection(db, 'cities');
+                const qCities = query(citiesRef, where('congregationId', '==', selectedCongregationId));
+                const citiesSnap = await getDocs(qCities);
+                setAvailableCities(citiesSnap.docs.map(doc => ({ id: doc.id, name: doc.data().name })));
 
-            const { data: territories } = await supabase
-                .from('territories')
-                .select('id, name')
-                .eq('congregation_id', selectedCongregationId)
-                .eq('city_id', selectedCityId)
-                .order('name');
-
-            if (territories) {
-                const sortedT = territories.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+                // Fetch Territories
+                const territoriesRef = collection(db, 'territories');
+                const qTerrs = query(
+                    territoriesRef,
+                    where('congregationId', '==', selectedCongregationId),
+                    where('cityId', '==', selectedCityId)
+                );
+                const terrsSnap = await getDocs(qTerrs);
+                const terrs = terrsSnap.docs.map(doc => ({ id: doc.id, name: doc.data().name }));
+                const sortedT = terrs.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
                 setAvailableTerritories(sortedT);
-            }
 
-            if (congregationId) {
-                const { data: cong } = await supabase.from('congregations').select('id, name').eq('id', congregationId).single();
-                if (cong) setAvailableCongregations([{ id: cong.id, name: cong.name }]);
+                if (congregationId) {
+                    const congRef = doc(db, 'congregations', congregationId);
+                    const congSnap = await getDoc(congRef);
+                    if (congSnap.exists()) {
+                        setAvailableCongregations([{ id: congSnap.id, name: congSnap.data().name }]);
+                    }
+                }
+            } catch (e) {
+                console.error("Error fetching options:", e);
             }
         };
 
@@ -448,12 +474,8 @@ function AddressListContent() {
         if (!addressToDelete) return;
         setIsDeleting(true);
         try {
-            const { error } = await supabase
-                .from('addresses')
-                .delete()
-                .eq('id', addressToDelete);
-
-            if (error) throw error;
+            const addrRef = doc(db, 'addresses', addressToDelete);
+            await deleteDoc(addrRef);
             toast.success("Endereço excluído com sucesso!");
             fetchAddresses();
             setIsDeleteDialogOpen(false);
@@ -504,10 +526,12 @@ function AddressListContent() {
         setDraggedId(null);
 
         try {
-            const updates = addresses.map((addr, index) =>
-                supabase.from('addresses').update({ sort_order: index }).eq('id', addr.id)
-            );
-            await Promise.all(updates);
+            const batch = writeBatch(db);
+            addresses.forEach((addr, index) => {
+                const addrRef = doc(db, 'addresses', addr.id);
+                batch.update(addrRef, { sortOrder: index });
+            });
+            await batch.commit();
         } catch (error) {
             console.error("Error updating sort order:", error);
         }
@@ -523,7 +547,8 @@ function AddressListContent() {
 
     const handleGeocodeSuccess = async (id: string, lat: number, lng: number) => {
         try {
-            await supabase.from('addresses').update({ lat, lng }).eq('id', id);
+            const addrRef = doc(db, 'addresses', id);
+            await updateDoc(addrRef, { lat, lng });
         } catch (error) {
             console.error("Error syncing geocoded coords:", error);
         }
@@ -568,15 +593,17 @@ function AddressListContent() {
     const handleRemoveDNVMark = async (addr: Address) => {
         try {
             // Fetch the latest visit for this address to delete it
-            const { data: latestVisit, error: fetchErr } = await supabase
-                .from('visits')
-                .select('id')
-                .eq('address_id', addr.id)
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .single();
+            const visitsRef = collection(db, 'visits');
+            const q = query(
+                visitsRef,
+                where('addressId', '==', addr.id),
+                orderBy('createdAt', 'desc'),
+                limit(1)
+            );
+            const qSnap = await getDocs(q);
+            const latestVisit = qSnap.docs[0];
 
-            if (fetchErr || !latestVisit) throw new Error("Não foi possível encontrar a visita relacionada.");
+            if (!latestVisit) throw new Error("Não foi possível encontrar a visita relacionada.");
 
             const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/visits/delete`, {
                 method: 'DELETE',

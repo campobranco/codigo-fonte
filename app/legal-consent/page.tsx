@@ -1,12 +1,16 @@
+// app/legal-consent/page.tsx
+// Página de consentimento legal para novos usuários
+// Migrado de Supabase para Firebase Firestore (Client SDK)
+
 "use client";
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/app/context/AuthContext';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/firebase';
+import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { Shield, Check, Loader2, FileText, Lock, UserCheck, AlertOctagon } from 'lucide-react';
 import { toast } from 'sonner';
-import Link from 'next/link';
 
 export default function LegalConsentPage() {
     const { user, loading } = useAuth();
@@ -35,15 +39,14 @@ export default function LegalConsentPage() {
 
         setSubmitting(true);
         try {
-            const { error } = await supabase
-                .from('users')
-                .update({
-                    terms_accepted_at: new Date().toISOString()
-                })
-                .eq('id', user.uid);
+            const userRef = doc(db, 'users', user.uid);
+            await updateDoc(userRef, {
+                termsAcceptedAt: serverTimestamp(),
+                // Mantemos suporte ao campo legado se necessário, mas o padrão agora é camelCase
+                terms_accepted_at: new Date().toISOString()
+            });
 
-            if (error) throw error;
-
+            // Forçar redirecionamento para garantir nova verificação de sessão
             window.location.href = '/dashboard';
         } catch (error) {
             console.error("Error updating consent:", error);

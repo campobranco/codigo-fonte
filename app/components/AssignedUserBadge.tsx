@@ -1,7 +1,12 @@
+// app/components/AssignedUserBadge.tsx
+// Componente que exibe o primeiro nome de um usuário a partir de seu ID
+// Migrado de Supabase para Firebase Firestore (Client SDK)
+
 "use client";
 
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 interface AssignedUserBadgeProps {
     userId: string;
@@ -9,7 +14,7 @@ interface AssignedUserBadgeProps {
 }
 
 export default function AssignedUserBadge({ userId, fallbackName }: AssignedUserBadgeProps) {
-    // Initial state derived from fallback to show something immediately
+    // Estado inicial derivado do fallback para mostrar algo imediatamente
     const [displayName, setDisplayName] = useState(() => {
         return (fallbackName || '???').split(' ')[0].toUpperCase();
     });
@@ -18,20 +23,21 @@ export default function AssignedUserBadge({ userId, fallbackName }: AssignedUser
         if (!userId) return;
 
         let isMounted = true;
+
         const fetchName = async () => {
             try {
-                // We utilize Supabase cache/query
-                const { data } = await supabase
-                    .from('users')
-                    .select('name')
-                    .eq('id', userId)
-                    .single();
+                // Busca o documento do usuário no Firestore
+                const userRef = doc(db, 'users', userId);
+                const userDoc = await getDoc(userRef);
 
-                if (isMounted && data && data.name) {
-                    setDisplayName(data.name.split(' ')[0].toUpperCase());
+                if (isMounted && userDoc.exists()) {
+                    const data = userDoc.data();
+                    if (data.name) {
+                        setDisplayName(data.name.split(' ')[0].toUpperCase());
+                    }
                 }
             } catch (e) {
-                console.warn("Error fetching badge name", e);
+                console.warn("[Badge] Error fetching name from Firestore:", e);
             }
         };
 

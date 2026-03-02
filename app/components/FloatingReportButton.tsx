@@ -1,10 +1,15 @@
+// app/components/FloatingReportButton.tsx
+// Botão flutuante para capturar erro visual e relatar bug
+// Migrado de Supabase para Firebase Firestore (Client SDK)
+
 "use client";
 
 import { useState, useEffect } from 'react';
 import { Camera, X, CheckCircle2, Loader2, Bug } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import Image from 'next/image';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '@/app/context/AuthContext';
 import { toast } from 'sonner';
 import { getConsoleLogs, resetErrorCount } from '@/lib/logger';
@@ -85,17 +90,18 @@ export default function FloatingReportButton() {
                 consoleLogs: getConsoleLogs()
             };
 
-            const { error } = await supabase
-                .from('bug_reports')
-                .insert([{
-                    user_id: user?.id || null,
-                    title: `Relato via Botão Flutuante - ${new Date().toLocaleDateString()}`,
-                    description: description,
-                    device_info: deviceInfo,
-                    status: 'NEW'
-                }]);
-
-            if (error) throw error;
+            // Inserção no Firestore
+            await addDoc(collection(db, 'bug_reports'), {
+                userId: user?.uid || null,
+                user_id: user?.uid || null, // Legado
+                title: `Relato via Botão Flutuante - ${new Date().toLocaleDateString('pt-BR')}`,
+                description: description,
+                deviceInfo: deviceInfo,
+                device_info: deviceInfo, // Legado
+                status: 'NEW',
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp()
+            });
 
             setSuccess(true);
             toast.success("Bug relatado com sucesso! Obrigado.");

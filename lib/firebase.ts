@@ -20,5 +20,5 @@ const app: FirebaseApp = !getApps().length ? initializeApp(firebaseConfig) : get
 
 // Exporta instâncias dos serviços para uso nos componentes
 export const auth: Auth = getAuth(app);
-export const db: Firestore = getFirestore(app);
+export const db: Firestore = getFirestore(app, process.env.NEXT_PUBLIC_FIREBASE_DATABASE_ID || '(default)');
 export { app };

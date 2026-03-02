@@ -1,4 +1,8 @@
-import { supabaseAdmin } from '@/lib/supabase-admin';
+// app/api/visits/delete/route.ts
+// API para remoção de visitas vinculadas a uma lista compartilhada
+// Migrado de Supabase para Firebase Admin SDK
+
+import { adminDb } from '@/lib/firebase-admin';
 import { NextResponse } from 'next/server';
 
 /**
@@ -15,33 +19,36 @@ export async function POST(req: Request) {
         }
 
         // 1. Verificar se o link de compartilhamento existe
-        const { data: list, error: listError } = await supabaseAdmin
-            .from('shared_lists')
-            .select('id')
-            .eq('id', shareId)
-            .single();
+        const listDoc = await adminDb.collection('shared_lists').doc(shareId).get();
 
-        if (listError || !list) {
+        if (!listDoc.exists) {
             return NextResponse.json({ error: 'Link de compartilhamento inválido' }, { status: 403 });
         }
 
-        // 2. Remover a(s) visita(s) associada(s)
-        // Filtramos por address_id e shared_list_id para garantir que não removemos o histórico global do endereço
-        const { error: deleteError } = await supabaseAdmin
-            .from('visits')
-            .delete()
-            .eq('address_id', addressId)
-            .eq('shared_list_id', shareId);
+        // 2. Remover a(s) visita(s) associada(s) do Firestore
+        // Buscamos as visitas que correspondem ao endereço e à lista compartilhada
+        const visitsSnapshot = await adminDb.collection('visits')
+            .where('addressId', '==', addressId)
+            .where('sharedListId', '==', shareId)
+            .get();
 
-        if (deleteError) {
-            console.error("[VISIT DELETE API] Delete error:", deleteError);
-            throw deleteError;
+        if (visitsSnapshot.empty) {
+            return NextResponse.json({ success: true, message: 'Nenhuma visita encontrada para remover' });
         }
+
+        // Firestore não deleta com query, precisamos deletar cada documento
+        // Usamos um batch para eficiência e atomicidade
+        const batch = adminDb.batch();
+        visitsSnapshot.docs.forEach(doc => {
+            batch.delete(doc.ref);
+        });
+
+        await batch.commit();
 
         return NextResponse.json({ success: true });
 
     } catch (error: any) {
-        console.error("Critical Error in /api/visits/delete:", error);
+        console.error("[VISIT_DELETE_API] Critical Error:", error);
         return NextResponse.json({ error: error.message || 'Erro interno no servidor' }, { status: 500 });
     }
 }

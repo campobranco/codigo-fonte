@@ -114,7 +114,7 @@ const adminApp: App = initAdminApp();
 
 // Evita chamar getFirestore/getAuth se o app for mock (comum no build do Next.js)
 export const adminDb: Firestore = adminApp.name !== '[mock]'
-    ? getFirestore(adminApp)
+    ? getFirestore(adminApp, process.env.NEXT_PUBLIC_FIREBASE_DATABASE_ID || '(default)')
     : {
         collection: () => { throw new Error('Firestore indisponível: credenciais ausentes.'); }
     } as any;

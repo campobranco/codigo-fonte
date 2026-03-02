@@ -20,7 +20,8 @@ import {
     Pencil,
     CheckCircle,
     Navigation,
-    MousePointer2
+    MousePointer2,
+    AlertCircle
 } from 'lucide-react';
 import MapView from '@/app/components/MapView';
 import { geocodeAddress } from '@/app/actions/geocoding';
@@ -79,6 +80,7 @@ function CityListContent() {
     const [tempCoords, setTempCoords] = useState<{ lat: number; lng: number } | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [isSearching, setIsSearching] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     // Stats State - Hybrid: Unique for base coverage, Volume for efficiency > 100%
     const [coverageStats, setCoverageStats] = useState<Record<string, {
@@ -134,8 +136,9 @@ function CityListContent() {
             }
 
             setCities(data.cities || []);
-        } catch (error) {
+        } catch (error: any) {
             console.error("Error fetching cities:", error);
+            setError(error?.message || "Erro desconhecido ao carregar cidades.");
         } finally {
             setLoading(false);
         }
@@ -158,8 +161,10 @@ function CityListContent() {
             })) as City[];
             setCities(citiesData);
             setLoading(false);
-        }, (error) => {
-            console.error("Error fetching cities:", error);
+            setError(null);
+        }, (err) => {
+            console.error("Error fetching cities:", err);
+            setError(err?.message || "Erro desconhecido ao carregar cidades.");
             setLoading(false);
         });
 
@@ -486,6 +491,48 @@ function CityListContent() {
             <div className="flex flex-col">
                 {/* Top: City List */}
                 <div className="flex-1 bg-surface">
+                    {error && (
+                        (() => {
+                            const isBuilding = error?.includes('building');
+                            return (
+                                <div className={`mx-6 mt-6 ${isBuilding ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'} p-4 rounded-lg flex items-start gap-3 animate-in zoom-in-95`}>
+                                    {isBuilding ? (
+                                        <Loader2 className="w-5 h-5 text-blue-500 shrink-0 mt-0.5 animate-spin" />
+                                    ) : (
+                                        <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                                    )}
+                                    <div>
+                                        <h3 className={`font-bold ${isBuilding ? 'text-blue-800 dark:text-blue-400' : 'text-red-800 dark:text-red-400'} text-sm`}>
+                                            {isBuilding ? 'Preparando Banco de Dados' : 'Erro de Dados'}
+                                        </h3>
+                                        <p className={`${isBuilding ? 'text-blue-600 dark:text-blue-500' : 'text-red-600 dark:text-red-500'} text-xs mt-1 break-all`}>
+                                            {error?.includes('https://') ? (
+                                                <>
+                                                    {isBuilding
+                                                        ? 'O Firebase está criando um índice necessário para esta consulta. Isso pode levar alguns minutos.'
+                                                        : error.split('https://')[0]}
+                                                    <a
+                                                        href={`https://${error.split('https://')[1]}`}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className={`underline font-extrabold transition-colors block mt-2 p-2 rounded border ${isBuilding ? 'bg-blue-500/10 border-blue-500/20 hover:text-blue-800' : 'bg-red-500/10 border-red-500/20 hover:text-red-800'}`}
+                                                    >
+                                                        Ver progresso no Firebase Console
+                                                    </a>
+                                                </>
+                                            ) : error}
+                                        </p>
+                                        {!isBuilding && (
+                                            <p className="text-red-500 dark:text-red-400 text-[10px] mt-2 leading-relaxed">
+                                                Isso pode ocorrer se o esquema do banco de dados estiver incompleto ou se uma consulta exigir um índice composto que ainda não foi criado no Firebase Console.
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })()
+                    )}
+
                     {/* Search */}
                     <div className="px-6 pt-6 pb-2 sticky top-0 bg-surface z-10 transition-colors">
                         <div className="relative group">

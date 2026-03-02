@@ -1,8 +1,13 @@
+// app/components/VisitHistoryModal.tsx
+// Modal para exibição do histórico de visitas de um endereço
+// Migrado de Supabase para Firebase Firestore (Client SDK)
+
 "use client";
 
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/firebase';
+import { collection, query, where, orderBy, limit, getDocs, doc, getDoc, documentId } from 'firebase/firestore';
 import { useAuth } from '@/app/context/AuthContext';
 import {
     X,
@@ -32,52 +37,82 @@ export default function VisitHistoryModal({ addressId, onClose, address, isShare
     const [visits, setVisits] = useState<any[]>([]);
     const { user, congregationId } = useAuth();
     const [isMounted, setIsMounted] = useState(false);
+
     useEffect(() => {
         setIsMounted(true);
     }, []);
 
-
     useEffect(() => {
         if (!addressId) return;
+
         const fetchHistory = async () => {
             setLoading(true);
             try {
-                // Fetch visits from Supabase 'visits' table
-                let { data: rawVisits, error } = await supabase
-                    .from('visits')
-                    .select('*')
-                    .eq('address_id', addressId)
-                    .order('visit_date', { ascending: false })
-                    .limit(50);
+                // Busca visitas da coleção 'visits' no Firestore
+                const visitsRef = collection(db, 'visits');
+                const q = query(
+                    visitsRef,
+                    where('addressId', '==', addressId),
+                    orderBy('visitDate', 'desc'),
+                    limit(50)
+                );
 
-                if (error) throw error;
-                if (!rawVisits) rawVisits = [];
+                const snapshot = await getDocs(q);
+                let rawVisits = snapshot.docs.map(d => ({
+                    id: d.id,
+                    ...d.data()
+                }));
 
-                // Fetch real names for users
-                const userIds = Array.from(new Set(rawVisits.map((v: any) => v.user_id).filter(id => id)));
+                // Fallback para campos snake_case legado
+                if (rawVisits.length === 0) {
+                    const qLegacy = query(
+                        visitsRef,
+                        where('address_id', '==', addressId),
+                        orderBy('visit_date', 'desc'),
+                        limit(50)
+                    );
+                    const snapshotLegacy = await getDocs(qLegacy);
+                    rawVisits = snapshotLegacy.docs.map(d => ({
+                        id: d.id,
+                        ...d.data()
+                    }));
+                }
+
+                // Busca nomes reais para os usuários de forma otimizada
+                const userIds = Array.from(new Set(rawVisits.map((v: any) => v.userId || v.user_id).filter(id => id)));
                 const userNamesMap = new Map<string, string>();
 
                 if (userIds.length > 0) {
-                    const { data: usersData } = await supabase
-                        .from('users')
-                        .select('id, name')
-                        .in('id', userIds);
+                    // Nota: Firestore não tem 'in' para documentos simples, buscamos um por um ou via 'in' na coleção
+                    const usersRef = collection(db, 'users');
+                    // O limite de 'in' no Firestore é 30, o que é seguro aqui para 50 visitas
+                    const userQuery = query(usersRef, where(documentId(), 'in', userIds.slice(0, 30)));
+                    const userSnapshot = await getDocs(userQuery);
 
-                    if (usersData) {
-                        usersData.forEach((u: any) => {
-                            userNamesMap.set(u.id, u.name);
-                        });
-                    }
+                    userSnapshot.docs.forEach(d => {
+                        userNamesMap.set(d.id, d.data().name);
+                    });
                 }
 
                 const mergedVisits = rawVisits.map((v: any) => ({
                     ...v,
-                    displayName: userNamesMap.get(v.user_id) || v.publisher_name || 'Publicador'
+                    displayName: userNamesMap.get(v.userId || v.user_id) || v.publisherName || v.publisher_name || 'Publicador',
+                    visitDate: v.visitDate || v.visit_date,
+                    tagsSnapshot: v.tagsSnapshot || v.tags_snapshot
                 }));
 
                 setVisits(mergedVisits);
             } catch (error) {
-                console.error("Error fetching history:", error);
+                console.error("[VISIT_HISTORY] Error fetching from Firestore:", error);
+
+                // Tenta busca simples se falhar por falta de índice
+                try {
+                    const visitsRef = collection(db, 'visits');
+                    const qSimple = query(visitsRef, where('addressId', '==', addressId), limit(50));
+                    const snapshotSimple = await getDocs(qSimple);
+                    const data = snapshotSimple.docs.map(d => ({ id: d.id, ...d.data() }));
+                    setVisits(data);
+                } catch (e) { }
             } finally {
                 setLoading(false);
             }

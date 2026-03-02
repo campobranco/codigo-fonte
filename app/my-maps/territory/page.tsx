@@ -31,7 +31,20 @@ import ConfirmationModal from '@/app/components/ConfirmationModal';
 import TerritoryHistoryModal from '@/app/components/TerritoryHistoryModal';
 import TerritoryAssignmentsModal from '@/app/components/TerritoryAssignmentsModal';
 import AssignedUserBadge from '@/app/components/AssignedUserBadge';
-import { supabase } from '@/lib/supabase';
+import {
+    doc,
+    getDoc,
+    getDocs,
+    collection,
+    query,
+    where,
+    addDoc,
+    updateDoc,
+    deleteDoc,
+    serverTimestamp,
+    onSnapshot
+} from "firebase/firestore";
+import { db } from '@/lib/firebase';
 import Link from 'next/link';
 import { useAuth } from '@/app/context/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -56,7 +69,8 @@ function TerritoryListContent() {
     const cityId = searchParams.get('cityId');
     const { user, isAdmin, isAdminRoleGlobal, isElder, isServant, loading: authLoading } = useAuth();
     const router = useRouter();
-    const currentView = searchParams.get('view') || 'grid';
+    const [currentView, setCurrentView] = useState(searchParams.get('view') || 'grid');
+    const [error, setError] = useState<string | null>(null);
 
     // State
     const [territories, setTerritories] = useState<Territory[]>([]);
@@ -120,8 +134,12 @@ function TerritoryListContent() {
     useEffect(() => {
         if (!cityId) return;
         const fetchCity = async () => {
-            const { data } = await supabase.from('cities').select('name').eq('id', cityId).single();
-            if (data) setCityName(data.name);
+            const cityRef = doc(db, 'cities', cityId);
+            const citySnap = await getDoc(cityRef);
+            if (citySnap.exists()) {
+                const data = citySnap.data();
+                setCityName(data.name);
+            }
         };
         fetchCity();
     }, [cityId]);
@@ -130,8 +148,12 @@ function TerritoryListContent() {
     useEffect(() => {
         if (!congregationId) return;
         const fetchSettings = async () => {
-            const { data } = await supabase.from('congregations').select('term_type').eq('id', congregationId).single();
-            if (data) setLocalTermType(data.term_type as any || 'city');
+            const congRef = doc(db, 'congregations', congregationId);
+            const congSnap = await getDoc(congRef);
+            if (congSnap.exists()) {
+                const data = congSnap.data();
+                setLocalTermType((data.termType || data.term_type) as any || 'city');
+            }
         };
         fetchSettings();
     }, [congregationId]);
@@ -169,8 +191,9 @@ function TerritoryListContent() {
 
             setAddressCounts(prev => ({ ...prev, ...counts }));
             setGenderStats(prev => ({ ...prev, ...gStats }));
-        } catch (error) {
+        } catch (error: any) {
             console.error("Error fetching territories:", error);
+            setError(error?.message || "Erro desconhecido ao carregar territórios.");
         } finally {
             setLoading(false);
         }
@@ -180,19 +203,14 @@ function TerritoryListContent() {
         fetchTerritories();
 
         if (congregationId && cityId) {
-            // Realtime is still active, but when it triggers, fetch from backend to bypass RLS
-            const subscription = supabase
-                .channel('territories_list')
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'territories', filter: `city_id=eq.${cityId}` }, () => {
-                    fetchTerritories();
-                })
-                .subscribe();
+            const territoriesRef = collection(db, 'territories');
+            const q = query(territoriesRef, where('cityId', '==', cityId));
 
-            return () => {
-                setTimeout(() => {
-                    subscription.unsubscribe();
-                }, 100);
-            };
+            const unsubscribe = onSnapshot(q, () => {
+                fetchTerritories();
+            });
+
+            return () => unsubscribe();
         }
     }, [congregationId, cityId]);
 
@@ -247,49 +265,49 @@ function TerritoryListContent() {
     }, [congregationId, cityId, searchInItems, searchTerm, currentView]);
 
     // Fetch Shared Lists (Assignments)
-    // TODO: Migrate shared_lists logic fully. This is a placeholder for reading existing structure if migrated, 
-    // or assuming we create a new structure. For now, we assume 'shared_lists' table exists in Supabase.
     useEffect(() => {
         if (!congregationId) return;
 
         const fetchSharedLists = async () => {
-            const { data, error } = await supabase
-                .from('shared_lists')
-                .select('*')
-                .eq('congregation_id', congregationId);
+            try {
+                const listsRef = collection(db, 'shared_lists');
+                const q = query(listsRef, where('congregationId', '==', congregationId));
+                const querySnapshot = await getDocs(q);
 
-            if (error) {
-                console.error("Error fetching shared lists:", error);
-                return;
-            }
+                const assignmentsMap: Record<string, any[]> = {};
+                const sharedMap: Record<string, boolean> = {};
 
-            const assignmentsMap: Record<string, any[]> = {};
-            const sharedMap: Record<string, boolean> = {};
-            // const completionMap: Record<string, Date> = {}; // TODO: Logic for completion history
+                querySnapshot.docs.forEach((docSnap) => {
+                    const list = docSnap.data();
+                    const listId = docSnap.id;
 
-            data?.forEach((list: any) => {
-                if (list.type === 'territory' && list.items && Array.isArray(list.items)) {
-                    // Active
-                    if (list.status !== 'completed') {
-                        list.items.forEach((tId: string) => {
-                            sharedMap[tId] = true;
-                            if (list.assigned_name && list.assigned_to) {
-                                if (!assignmentsMap[tId]) assignmentsMap[tId] = [];
-                                assignmentsMap[tId].push({
-                                    id: list.id,
-                                    listTitle: list.title,
-                                    assignedName: list.assigned_name,
-                                    assignedTo: list.assigned_to,
-                                    assignedAt: list.assigned_at
-                                });
-                            }
-                        });
+                    if ((list.type === 'territory' || list.type === 'LIST_CARDS') && list.items && Array.isArray(list.items)) {
+                        // Active
+                        if (list.status !== 'completed' && list.status !== 'archived') {
+                            list.items.forEach((tId: string) => {
+                                sharedMap[tId] = true;
+                                const assignedName = list.assignedName || list.assigned_name;
+                                const assignedTo = list.assignedTo || list.assigned_to;
+                                if (assignedName && assignedTo) {
+                                    if (!assignmentsMap[tId]) assignmentsMap[tId] = [];
+                                    assignmentsMap[tId].push({
+                                        id: listId,
+                                        listTitle: list.title,
+                                        assignedName,
+                                        assignedTo,
+                                        assignedAt: list.assignedAt || list.assigned_at
+                                    });
+                                }
+                            });
+                        }
                     }
-                }
-            });
+                });
 
-            setTerritoryAssignments(assignmentsMap);
-            setSharingStatusMap(sharedMap);
+                setTerritoryAssignments(assignmentsMap);
+                setSharingStatusMap(sharedMap);
+            } catch (error) {
+                console.error("Error fetching shared lists:", error);
+            }
         };
 
         fetchSharedLists();
@@ -430,9 +448,9 @@ function TerritoryListContent() {
             t.notes?.toLowerCase().includes(searchTerm.toLowerCase());
 
         if (searchInItems && searchTerm) {
-            const indexContent = territorySearchIndex[t.id] || '';
-            const matchesContent = indexContent.includes(searchTerm.toLowerCase());
-            return matchesName || matchesContent;
+            const searchStr = territorySearchIndex[t.id] || '';
+            const inAddresses = searchStr.includes(searchTerm.toLowerCase());
+            return matchesName || inAddresses;
         }
 
         return matchesName;
@@ -487,6 +505,40 @@ function TerritoryListContent() {
 
 
             <div className="px-6 pt-6 space-y-4">
+                {error && (
+                    <div className={`border p-4 rounded-lg flex items-start gap-3 animate-in zoom-in-95 ${error.includes('building') ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'}`}>
+                        {error.includes('building') ? (
+                            <Loader2 className="w-5 h-5 text-blue-500 shrink-0 mt-0.5 animate-spin" />
+                        ) : (
+                            <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                        )}
+                        <div>
+                            <h3 className={`font-bold text-sm ${error.includes('building') ? 'text-blue-800 dark:text-blue-400' : 'text-red-800 dark:text-red-400'}`}>
+                                {error.includes('building') ? 'Preparando Banco de Dados' : 'Erro de Dados'}
+                            </h3>
+                            <p className={`text-xs mt-1 break-all ${error.includes('building') ? 'text-blue-600 dark:text-blue-500' : 'text-red-600 dark:text-red-500'}`}>
+                                {error?.includes('https://') ? (
+                                    <>
+                                        {error.includes('building') ? 'O Firebase está criando um índice necessário para esta consulta. Isso pode levar alguns minutos.' : error.split('https://')[0]}
+                                        <a
+                                            href={`https://${error.split('https://')[1]}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className={`underline font-extrabold transition-colors block mt-2 p-2 rounded border ${error.includes('building') ? 'bg-blue-500/10 border-blue-500/20 hover:text-blue-800' : 'bg-red-500/10 border-red-500/20 hover:text-red-800'}`}
+                                        >
+                                            {error.includes('building') ? 'Ver progresso no Firebase Console' : 'Clique aqui para criar o índice no Firebase Console'}
+                                        </a>
+                                    </>
+                                ) : error}
+                            </p>
+                            {!error.includes('building') && (
+                                <p className="text-red-500 dark:text-red-400 text-[10px] mt-2 leading-relaxed">
+                                    Isso pode ocorrer se o esquema do banco de dados estiver incompleto ou se uma consulta exigir um índice composto que ainda não foi criado no Firebase Console.
+                                </p>
+                            )}
+                        </div>
+                    </div>
+                )}
                 <div className="relative group">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted w-5 h-5 group-focus-within:text-primary transition-colors" />
                     <input

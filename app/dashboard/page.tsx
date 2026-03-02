@@ -4,7 +4,21 @@
 import { useEffect, useState, useCallback } from "react";
 import Image from "next/image";
 import { useAuth } from "@/app/context/AuthContext";
-import { supabase } from "@/lib/supabase";
+import {
+    doc,
+    getDoc,
+    getDocs,
+    collection,
+    query,
+    where,
+    orderBy,
+    limit,
+    getCountFromServer,
+    serverTimestamp,
+    deleteDoc,
+    updateDoc
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import {
     Map as MapIcon,
     Home,
@@ -120,27 +134,18 @@ export default function DashboardPage() {
 
         const fetchMyAssignments = async () => {
             try {
-                const userId = user.uid || (user as any).id;
+                const userId = user.uid;
 
-                // Evita erro do PostgreSQL "invalid input syntax for type uuid" caso o ID seja do Firebase
-                const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
-                if (!isUUID) {
-                    setMyAssignments([]);
-                    setPendingMapsCount(0);
-                    setExpiringMaps([]);
-                    return;
-                }
+                const q = query(
+                    collection(db, 'shared_lists'),
+                    where('assigned_to', '==', userId)
+                );
 
-                // Colunas confirmadas no schema — exclui context (jsonb pesado) e city_id que não são usados aqui
-                const { data: lists, error } = await supabase
-                    .from('shared_lists')
-                    .select('id, title, name, status, assigned_to, assigned_name, created_at, expires_at, congregation_id, territory_id, type')
-                    .eq('assigned_to', userId);
-
-                if (error) {
-                    console.error("Error fetching my assignments:", error);
-                    return;
-                }
+                const querySnapshot = await getDocs(q);
+                const lists = querySnapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                } as any));
 
                 const processedLists: any[] = [];
                 lists.forEach((data: any) => {
@@ -153,20 +158,20 @@ export default function DashboardPage() {
                 });
 
                 processedLists.sort((a, b) => {
-                    const dateA = new Date(a.created_at || 0).getTime();
-                    const dateB = new Date(b.created_at || 0).getTime();
+                    const dateA = a.created_at?.toDate ? a.created_at.toDate().getTime() : new Date(a.created_at || 0).getTime();
+                    const dateB = b.created_at?.toDate ? b.created_at.toDate().getTime() : new Date(b.created_at || 0).getTime();
                     return dateB - dateA;
                 });
 
                 const expiring = processedLists.filter(l => {
                     if (!l.expires_at) return false;
-                    const expires = new Date(l.expires_at);
+                    const expires = l.expires_at?.toDate ? l.expires_at.toDate() : new Date(l.expires_at);
                     const now = new Date();
                     const diffMs = expires.getTime() - now.getTime();
                     const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
                     return diffDays > 0 && diffDays <= 10;
                 }).map(l => {
-                    const expires = new Date(l.expires_at);
+                    const expires = l.expires_at?.toDate ? l.expires_at.toDate() : new Date(l.expires_at);
                     const now = new Date();
                     const diffMs = expires.getTime() - now.getTime();
                     const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
@@ -208,72 +213,67 @@ export default function DashboardPage() {
 
         setHistoryLoading(true);
         try {
-            // Colunas confirmadas no schema — exclui context (jsonb) e city_id que não são usados na listagem
-            let query = supabase.from('shared_lists').select('id, title, name, status, assigned_to, assigned_name, created_at, returned_at, expires_at, congregation_id, territory_id, items, type');
+            const listsRef = collection(db, 'shared_lists');
+            let q;
 
             if (congregationId) {
-                query = query.eq('congregation_id', congregationId);
+                q = query(listsRef, where('congregationId', '==', congregationId));
             } else if (role !== 'ADMIN') {
-                return; // Protection for normal users
+                return;
             } else {
-                // Admin without congregation: force empty results
-                query = query.eq('id', '00000000-0000-0000-0000-000000000000');
+                q = query(listsRef, limit(100));
             }
 
             const usersMap: Record<string, string> = {};
             try {
-                let uQuery = supabase.from('users').select('id, name');
+                const usersRef = collection(db, 'users');
+                let uQ;
                 if (congregationId) {
-                    uQuery = uQuery.eq('congregation_id', congregationId);
-                } else if (role !== 'ADMIN') {
-                    // Skip
+                    uQ = query(usersRef, where('congregationId', '==', congregationId));
                 } else {
-                    uQuery = uQuery.limit(500);
+                    uQ = query(usersRef, limit(500));
                 }
-
-                const { data: users } = await uQuery;
-                if (users) {
-                    users.forEach((u: any) => {
-                        usersMap[u.id] = u.name || "";
-                    });
-                }
+                const usersSnap = await getDocs(uQ);
+                usersSnap.forEach(doc => {
+                    const data = doc.data();
+                    usersMap[doc.id] = data.name || "";
+                });
             } catch (e) {
                 console.warn("Error fetching users map:", e);
             }
 
-            const { data: lists, error } = await query;
-            if (error) throw error;
+            const querySnapshot = await getDocs(q);
+            const lists = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
             const processedLists: any[] = [];
-            if (lists) {
-                for (const data of lists) {
-                    let responsible = 'Não atribuído';
-                    if (data.assigned_to && usersMap[data.assigned_to]) {
-                        responsible = usersMap[data.assigned_to];
-                    } else {
-                        responsible = data.assigned_name || 'Não atribuído';
-                    }
-
-                    processedLists.push({
-                        ...data,
-                        responsibleName: responsible
-                    });
+            for (const data of lists as any[]) {
+                let responsible = 'Não atribuído';
+                const assignedTo = data.assigned_to || data.assignedTo;
+                if (assignedTo && usersMap[assignedTo]) {
+                    responsible = usersMap[assignedTo];
+                } else {
+                    responsible = data.assigned_name || data.assignedName || 'Não atribuído';
                 }
+
+                processedLists.push({
+                    ...data,
+                    responsibleName: responsible
+                });
             }
 
             let filteredLists = [...processedLists];
             if (!isElder && !isServant && role !== 'ADMIN') {
-                filteredLists = processedLists.filter(l => l.assigned_to === (user?.uid || (user as any)?.id));
+                filteredLists = processedLists.filter(l => (l.assigned_to || l.assignedTo) === user?.uid);
             }
 
             filteredLists.sort((a, b) => {
-                const isAActive = a.status !== 'completed';
-                const isBActive = b.status !== 'completed';
+                const isAActive = a.status !== 'completed' && a.status !== 'archived';
+                const isBActive = b.status !== 'completed' && b.status !== 'archived';
                 if (isAActive && !isBActive) return -1;
                 if (!isAActive && isBActive) return 1;
 
-                const dateA = new Date(a.created_at || 0).getTime();
-                const dateB = new Date(b.created_at || 0).getTime();
+                const dateA = a.created_at?.toDate ? a.created_at.toDate().getTime() : new Date(a.created_at || 0).getTime();
+                const dateB = b.created_at?.toDate ? b.created_at.toDate().getTime() : new Date(b.created_at || 0).getTime();
                 return dateB - dateA;
             });
 
@@ -284,7 +284,7 @@ export default function DashboardPage() {
         } finally {
             setHistoryLoading(false);
         }
-    }, [congregationId, role, isElder, isServant, profileName, user]);
+    }, [congregationId, role, isElder, isServant, user]);
 
     // Safety Timeout for Dashboard
     useEffect(() => {
@@ -306,21 +306,17 @@ export default function DashboardPage() {
 
         const checkNotifications = async () => {
             try {
-                // Colunas confirmadas: id, slug, title, body, is_active, created_at
-                // Usamos apenas slug, title e body — id e created_at não são necessários aqui
-                const { data: templatesData } = await supabase
-                    .from('notification_templates')
-                    .select('slug, title, body')
-                    .eq('is_active', true);
+                const templatesRef = collection(db, 'notification_templates');
+                const q = query(templatesRef, where('isActive', '==', true));
+                const querySnapshot = await getDocs(q);
 
                 const templates: Record<string, any> = {};
-                if (templatesData) {
-                    templatesData.forEach((data: any) => {
-                        if (data.slug) {
-                            templates[data.slug] = data;
-                        }
-                    });
-                }
+                querySnapshot.forEach((docSnap) => {
+                    const data = docSnap.data();
+                    if (data.slug) {
+                        templates[data.slug] = data;
+                    }
+                });
 
                 const now = new Date();
                 const trigger = (slug: string, uniqueKey: string) => {
@@ -338,14 +334,16 @@ export default function DashboardPage() {
                 };
 
                 const myActiveLists = sharedHistory.filter(l => {
-                    const isAssigned = l.assigned_to === (user?.uid || (user as any)?.id) || l.created_by === (user?.uid || (user as any)?.id);
+                    const userId = user?.uid;
+                    const isAssigned = (l.assigned_to || l.assignedTo) === userId || (l.created_by || l.createdBy) === userId;
                     return isAssigned && l.status === 'active';
                 });
 
                 myActiveLists.forEach(list => {
-                    if (!list.created_at) return;
-                    const created = new Date(list.created_at);
-                    const diffMs = now.getTime() - created.getTime();
+                    const createdAt = list.created_at?.toDate ? list.created_at.toDate() : (list.created_at ? new Date(list.created_at) : null);
+                    if (!createdAt) return;
+
+                    const diffMs = now.getTime() - createdAt.getTime();
                     const diffDays = diffMs / (1000 * 60 * 60 * 24);
                     const diffHours = diffMs / (1000 * 60 * 60);
 
@@ -360,9 +358,9 @@ export default function DashboardPage() {
                         trigger('encourage_2weeks', list.id);
                     }
 
-                    if (list.expires_at) {
-                        const expires = new Date(list.expires_at);
-                        if (expires > now && (expires.getTime() - now.getTime()) < (24 * 60 * 60 * 1000)) {
+                    if (list.expires_at || list.expiresAt) {
+                        const expires = (list.expiresAt?.toDate ? list.expiresAt.toDate() : (list.expires_at ? new Date(list.expires_at) : null));
+                        if (expires && expires > now && (expires.getTime() - now.getTime()) < (24 * 60 * 60 * 1000)) {
                             trigger('link_expiration', list.id);
                         }
                     }
@@ -383,28 +381,44 @@ export default function DashboardPage() {
         const fetchStats = async () => {
             try {
                 if (!congregationId && role !== 'ADMIN') return;
-                const targetCong = congregationId || '00000000-0000-0000-0000-000000000000';
+                const targetCong = congregationId;
 
-                // Fetch data efficiently
-                // 1. For large tables, we use head counts (only get total records)
-                // 2. For territories, we join cities to avoid separate mapping
+                const citiesRef = collection(db, 'cities');
+                const territoriesRef = collection(db, 'territories');
+                const addressesRef = collection(db, 'addresses');
+                const pointsRef = collection(db, 'witnessing_points');
+                const visitsRef = collection(db, 'visits');
+                const historyRef = collection(db, 'shared_lists');
+
+                const qCities = targetCong ? query(citiesRef, where('congregationId', '==', targetCong)) : citiesRef;
+                const qTerritories = targetCong ? query(territoriesRef, where('congregationId', '==', targetCong)) : territoriesRef;
+                const qAddresses = targetCong ? query(addressesRef, where('congregationId', '==', targetCong), where('isActive', '==', true)) : query(addressesRef, where('isActive', '==', true));
+                const qPoints = targetCong ? query(pointsRef, where('congregationId', '==', targetCong)) : pointsRef;
+                const qVisits = targetCong ? query(visitsRef, where('congregationId', '==', targetCong)) : visitsRef;
+                const qHistory = targetCong ? query(historyRef, where('congregationId', '==', targetCong)) : historyRef;
+
                 const [
-                    { data: citiesData },
-                    { data: territoriesData },
-                    { count: addressesCount },
-                    { count: pointsCount },
-                    { count: visitsCount },
-                    { data: historyData }
+                    citiesSnap,
+                    territoriesSnap,
+                    addressesCountSnap,
+                    pointsCountSnap,
+                    visitsCountSnap,
+                    historySnap
                 ] = await Promise.all([
-                    supabase.from('cities').select('id, name').eq('congregation_id', targetCong),
-                    supabase.from('territories').select(`
-                        id, name, notes, city_id, manual_last_completed_date, last_visit, status, assigned_to
-                    `).eq('congregation_id', targetCong),
-                    supabase.from('addresses').select('*', { count: 'exact', head: true }).eq('congregation_id', targetCong).eq('is_active', true),
-                    supabase.from('witnessing_points').select('*', { count: 'exact', head: true }).eq('congregation_id', targetCong),
-                    supabase.from('visits').select('*', { count: 'exact', head: true }).eq('congregation_id', targetCong),
-                    supabase.from('shared_lists').select('territory_id, created_at, returned_at').eq('congregation_id', targetCong)
+                    getDocs(qCities),
+                    getDocs(qTerritories),
+                    getCountFromServer(qAddresses),
+                    getCountFromServer(qPoints),
+                    getCountFromServer(qVisits),
+                    getDocs(qHistory)
                 ]);
+
+                const citiesData = citiesSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })) as any[];
+                const territoriesData = territoriesSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })) as any[];
+                const addressesCount = addressesCountSnap.data().count;
+                const pointsCount = pointsCountSnap.data().count;
+                const visitsCount = visitsCountSnap.data().count;
+                const historyData = historySnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })) as any[];
 
                 // 1. Validate Cities
                 const validCityIds = new Set(citiesData?.map(c => c.id) || []);
@@ -421,13 +435,14 @@ export default function DashboardPage() {
 
                 if (historyData) {
                     historyData.forEach((data: any) => {
-                        if (data.territory_id && validTerritoryIds.has(data.territory_id)) {
-                            const created = data.created_at ? new Date(data.created_at).getTime() : 0;
-                            const returned = data.returned_at ? new Date(data.returned_at).getTime() : 0;
+                        const territoryId = data.territoryId || data.territory_id;
+                        if (territoryId && validTerritoryIds.has(territoryId)) {
+                            const created = data.created_at?.toDate ? data.created_at.toDate().getTime() : (data.created_at ? new Date(data.created_at).getTime() : 0);
+                            const returned = data.returned_at?.toDate ? data.returned_at.toDate().getTime() : (data.returned_at ? new Date(data.returned_at).getTime() : 0);
 
-                            if (created > (latestAnyActivityMap.get(data.territory_id) || 0)) latestAnyActivityMap.set(data.territory_id, created);
-                            if (returned > (latestWorkMap.get(data.territory_id) || 0)) latestWorkMap.set(data.territory_id, returned);
-                            if (returned > (latestAnyActivityMap.get(data.territory_id) || 0)) latestAnyActivityMap.set(data.territory_id, returned);
+                            if (created > (latestAnyActivityMap.get(territoryId) || 0)) latestAnyActivityMap.set(territoryId, created);
+                            if (returned > (latestWorkMap.get(territoryId) || 0)) latestWorkMap.set(territoryId, returned);
+                            if (returned > (latestAnyActivityMap.get(territoryId) || 0)) latestAnyActivityMap.set(territoryId, returned);
                         }
                     });
                 }
@@ -440,8 +455,11 @@ export default function DashboardPage() {
 
                 validTerritories.forEach((data: any) => {
                     let lastWork = 0;
-                    if (data.manual_last_completed_date) lastWork = new Date(data.manual_last_completed_date).getTime();
-                    if (data.last_visit && !lastWork) lastWork = new Date(data.last_visit).getTime();
+                    const manualLast = data.manualLastCompletedDate || data.manual_last_completed_date;
+                    if (manualLast) lastWork = manualLast?.toDate ? manualLast.toDate().getTime() : new Date(manualLast).getTime();
+
+                    const lastVisitField = data.lastVisit || data.last_visit;
+                    if (lastVisitField && !lastWork) lastWork = lastVisitField?.toDate ? lastVisitField.toDate().getTime() : new Date(lastVisitField).getTime();
 
                     const historyWork = latestWorkMap.get(data.id) || 0;
                     if (historyWork > lastWork) lastWork = historyWork;
@@ -455,10 +473,11 @@ export default function DashboardPage() {
                     const historyAny = latestAnyActivityMap.get(data.id) || 0;
                     if (historyAny > lastAny) lastAny = historyAny;
 
+                    const cityId = data.cityId || data.city_id;
                     const lastAnyDate = lastAny > 0 ? new Date(lastAny) : null;
-                    const cityName = (data.city_id && cityMap[data.city_id]) || 'Cidade Desconhecida';
+                    const cityName = (cityId && cityMap[cityId]) || 'Cidade Desconhecida';
 
-                    if (data.assigned_to) return;
+                    if (data.assigned_to || data.assignedTo) return;
 
                     const rollingYearAgo = new Date();
                     rollingYearAgo.setDate(rollingYearAgo.getDate() - 180);
@@ -561,8 +580,8 @@ export default function DashboardPage() {
     const handleDeleteShare = async (id: string) => {
         setConfirmModal(null);
         try {
-            const { error } = await supabase.from('shared_lists').delete().eq('id', id);
-            if (error) throw error;
+            const docRef = doc(db, 'shared_lists', id);
+            await deleteDoc(docRef);
             toast.success("Cartão removido do histórico.");
             setSharedHistory(prev => prev.filter(item => item.id !== id));
         } catch (err) {
@@ -574,14 +593,17 @@ export default function DashboardPage() {
     const handleRemoveResponsible = async (id: string) => {
         setConfirmModal(null);
         try {
-            const { error } = await supabase.from('shared_lists').update({
+            const docRef = doc(db, 'shared_lists', id);
+            await updateDoc(docRef, {
                 assigned_to: null,
-                assigned_name: null
-            }).eq('id', id);
-            if (error) throw error;
+                assignedTo: null,
+                assigned_name: null,
+                assignedName: null,
+                updatedAt: serverTimestamp()
+            });
             fetchSharedHistory();
             setMyAssignments(prev => prev.filter(item => item.id !== id));
-            toast.success("Responsável removido com sucesso!");
+            toast.success("Responsável removido.");
         } catch (err) {
             console.error("Error removing responsible:", err);
             toast.error("Erro ao remover responsável.");

@@ -4,10 +4,19 @@ import { useEffect, useState } from 'react';
 import Image from 'next/image';
 
 import { useAuth } from '@/app/context/AuthContext';
-import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { updateProfile } from 'firebase/auth';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import {
+    doc,
+    updateDoc,
+    serverTimestamp,
+    collection,
+    query,
+    where,
+    getDocs,
+    getDoc,
+    deleteDoc
+} from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import {
     LogOut,
@@ -124,13 +133,10 @@ export default function SettingsPage() {
                     // 1. Fetch Members (Only if canManageMembers)
                     let docs: any[] = [];
                     if (canManageMembers) {
-                        const { data: memberData, error: memberError } = await supabase
-                            .from("users")
-                            .select("*")
-                            .eq("congregation_id", congregationId);
-
-                        if (memberError) throw memberError;
-                        docs = memberData || [];
+                        const usersRef = collection(db, "users");
+                        const q = query(usersRef, where("congregationId", "==", congregationId));
+                        const querySnapshot = await getDocs(q);
+                        docs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
                         if (!isAdminRoleGlobal) {
                             docs = docs.filter((d: any) => d.role !== 'ADMIN');
@@ -140,30 +146,21 @@ export default function SettingsPage() {
 
                     // 2. Fetch Congregation for Token (Only if canInviteMembers)
                     if (canInviteMembers) {
-                        const { data: congData, error: congError } = await supabase
-                            .from("congregations")
-                            .select("invite_token")
-                            .eq("id", congregationId)
-                            .maybeSingle();
+                        const congRef = doc(db, "congregations", congregationId);
+                        const congSnap = await getDoc(congRef);
 
-                        if (congError) throw congError;
-
-                        if (congData) {
-                            let token = congData.invite_token;
+                        if (congSnap.exists()) {
+                            const congData = congSnap.data();
+                            let token = congData.inviteToken || congData.invite_token; // Suporta legado se existir
 
                             // Se não existe token, gera um automaticamente (apenas Ancião pode regenerar na UI)
                             if (!token && canManageMembers) {
                                 const generatedToken = crypto.randomUUID();
-                                const { error: updateError } = await supabase
-                                    .from("congregations")
-                                    .update({ invite_token: generatedToken })
-                                    .eq("id", congregationId);
-
-                                if (!updateError) {
-                                    token = generatedToken;
-                                } else {
-                                    console.error("Erro ao salvar token de convite:", updateError);
-                                }
+                                await updateDoc(congRef, {
+                                    inviteToken: generatedToken,
+                                    updatedAt: serverTimestamp()
+                                });
+                                token = generatedToken;
                             }
 
                             if (token) {
@@ -182,7 +179,7 @@ export default function SettingsPage() {
             };
             fetchCongregationAndMembers();
         }
-    }, [canInviteMembers, canManageMembers, congregationId, isAdminRoleGlobal, supabase]);
+    }, [canInviteMembers, canManageMembers, congregationId, isAdminRoleGlobal]);
 
     const handleGenerateNewToken = async () => {
         setConfirmModal({
@@ -195,12 +192,11 @@ export default function SettingsPage() {
                 setGeneratingToken(true);
                 try {
                     const newToken = crypto.randomUUID();
-
-                    const { error } = await supabase.from("congregations").update({
-                        invite_token: newToken
-                    }).eq("id", congregationId!);
-
-                    if (error) throw error;
+                    const congRef = doc(db, "congregations", congregationId!);
+                    await updateDoc(congRef, {
+                        inviteToken: newToken,
+                        updatedAt: serverTimestamp()
+                    });
 
                     setInviteToken(newToken);
                     setInviteLink(`${window.location.origin}/invite?token=${newToken}`);
@@ -229,8 +225,12 @@ export default function SettingsPage() {
                     else if (currentRole === 'SERVO') newRole = 'PUBLICADOR';
                     else newRole = 'SERVO';
 
-                    const { error } = await supabase.from("users").update({ role: newRole }).eq("id", uid);
-                    if (error) throw error;
+                    const userRef = doc(db, "users", uid);
+                    await updateDoc(userRef, {
+                        role: newRole,
+                        updatedAt: serverTimestamp()
+                    });
+
                     setMembers(prev => prev.map(m => m.id === uid ? { ...m, role: newRole } : m));
                     toast.success("Função atualizada com sucesso");
                 } catch (e) {
@@ -249,8 +249,11 @@ export default function SettingsPage() {
             onConfirm: async () => {
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
                 try {
-                    const { error } = await supabase.from("users").update({ role: 'ANCIAO' }).eq("id", uid);
-                    if (error) throw error;
+                    const userRef = doc(db, "users", uid);
+                    await updateDoc(userRef, {
+                        role: 'ANCIAO',
+                        updatedAt: serverTimestamp()
+                    });
                     setMembers(prev => prev.map(m => m.id === uid ? { ...m, role: 'ANCIAO' } : m));
                     toast.success("Membro promovido a Ancião");
                 } catch (e) {
@@ -269,11 +272,12 @@ export default function SettingsPage() {
             onConfirm: async () => {
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
                 try {
-                    const { error } = await supabase.from("users").update({
-                        congregation_id: null,
-                        role: 'PUBLICADOR'
-                    }).eq("id", uid);
-                    if (error) throw error;
+                    const userRef = doc(db, "users", uid);
+                    await updateDoc(userRef, {
+                        congregationId: null,
+                        role: 'PUBLICADOR',
+                        updatedAt: serverTimestamp()
+                    });
                     setMembers(prev => prev.filter(m => m.id !== uid));
                     toast.success("Membro removido.");
                 } catch (e) {
@@ -287,21 +291,14 @@ export default function SettingsPage() {
         if (!user || (!user.email && !user.uid)) return;
         setSaving(true);
         try {
-            // 1. Atualiza a tabela 'users' no Supabase (Secundário/Legado)
-            const { error: supabaseError } = await supabase.from('users').update({
-                name: editName,
-            }).eq('id', user.uid);
-
-            if (supabaseError) console.warn("Supabase update failed (Secondary):", supabaseError);
-
-            // 2. Atualiza o documento no Firestore (Principal)
+            // Atualiza o documento no Firestore (Principal)
             const userRef = doc(db, 'users', user.uid);
             await updateDoc(userRef, {
                 name: editName,
                 updatedAt: serverTimestamp()
             });
 
-            // 3. Atualiza o perfil no Firebase Auth (Principal para a UI)
+            // Atualiza o perfil no Firebase Auth (Principal para a UI)
             await updateProfile(user, {
                 displayName: editName
             });
@@ -927,8 +924,8 @@ export default function SettingsPage() {
                                                 try {
                                                     // 1. Delete Public Profile
                                                     if (user?.uid) {
-                                                        const { error: deleteError } = await supabase.from("users").delete().eq("id", user.uid);
-                                                        if (deleteError) throw deleteError;
+                                                        const userRef = doc(db, "users", user.uid);
+                                                        await deleteDoc(userRef);
                                                     }
 
                                                     // 2. Logout
@@ -954,7 +951,7 @@ export default function SettingsPage() {
 
                 <div className="pt-8 pb-12 flex flex-col items-center gap-4">
                     <a
-                        href="https://github.com/campobranco/campobranco"
+                        href="https://github.com/campobranco/codigo-fonte"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="group flex flex-col items-center gap-2 opacity-60 hover:opacity-100 transition-all duration-300"
@@ -965,7 +962,7 @@ export default function SettingsPage() {
                         </div>
 
                         <Image
-                            src="https://img.shields.io/github/stars/campobranco/campobranco?style=social"
+                            src="https://img.shields.io/github/stars/campobranco/codigo-fonte?style=social"
                             alt="GitHub Repo stars"
                             width={0}
                             height={0}

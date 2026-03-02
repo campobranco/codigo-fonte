@@ -15,7 +15,7 @@ export async function POST(req: Request) {
         }
 
         // 1. Verifica se a lista compartilhada existe e não está expirada
-        const listRef = adminDb.collection('sharedLists').doc(shareId);
+        const listRef = adminDb.collection('shared_lists').doc(shareId);
         const listSnap = await listRef.get();
 
         if (!listSnap.exists) {
