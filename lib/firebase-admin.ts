@@ -23,17 +23,27 @@ function initAdminApp(): App {
 
     console.log(`🔧 Firebase Admin: Iniciando para projeto [${projectId}]`);
 
-    // Prioridade 1: Chaves individuais (App Hosting Secrets) - Mais confiável para sessões manuais
+    // Verificação de presença de variáveis
+    const hasKey = !!(process.env.FB_ADMIN_PRIVATE_KEY || process.env.FIREBASE_ADMIN_PRIVATE_KEY || process.env.FIREBASE_PRIVATE_KEY);
+    const hasEmail = !!(process.env.FB_ADMIN_CLIENT_EMAIL || process.env.FIREBASE_ADMIN_CLIENT_EMAIL || process.env.FIREBASE_CLIENT_EMAIL);
+    
+    console.log(`🔍 Firebase Admin: Check de variáveis - Chave: ${hasKey}, Email: ${hasEmail}`);
+
+    // Prioridade 1: Chaves individuais (App Hosting / Vercel Secrets)
     const rawKey = process.env.FB_ADMIN_PRIVATE_KEY || process.env.FIREBASE_ADMIN_PRIVATE_KEY || process.env.FIREBASE_PRIVATE_KEY;
     const clientEmail = (process.env.FB_ADMIN_CLIENT_EMAIL || process.env.FIREBASE_ADMIN_CLIENT_EMAIL || process.env.FIREBASE_CLIENT_EMAIL || '').replace(/^["']|["']$/g, '').trim();
 
     if (rawKey && clientEmail) {
         try {
-            // Remove aspas, trata as quebras de linha literais \n e garante que a chave comece com o header correto
             let privateKey = rawKey.replace(/^["']|["']$/g, '').trim();
             privateKey = privateKey.replace(/\\n/g, '\n');
             
-            console.log('🚀 Firebase Admin: Inicializando via chaves individuais (App Hosting)');
+            // Garantir que a chave comece com o cabeçalho correto se estiver mal formatada
+            if (!privateKey.includes('-----BEGIN PRIVATE KEY-----')) {
+                console.error('❌ Firebase Admin: Chave privada mal formatada (sem header)');
+            }
+
+            console.log('🚀 Firebase Admin: Inicializando via chaves individuais');
             return initializeApp({
                 credential: cert({ projectId, clientEmail, privateKey }),
                 projectId
@@ -43,10 +53,10 @@ function initAdminApp(): App {
         }
     }
 
-    // Prioridade 2: ADC (Application Default Credentials) - Fallback para ambiente de nuvem nativo
-    if (process.env.NODE_ENV === 'production') {
+    // Prioridade 2: ADC (Application Default Credentials)
+    if (process.env.NODE_ENV === 'production' && !process.env.VERCEL) {
         try {
-            console.log('🌐 Firebase Admin: Tentando ADC...');
+            console.log('🌐 Firebase Admin: Tentando ADC (Ambiente Google)...');
             return initializeApp({
                 credential: applicationDefault(),
                 projectId: projectId
@@ -56,8 +66,7 @@ function initAdminApp(): App {
         }
     }
 
-
-    // Prioridade 4: service-account.json local (dev)
+    // Prioridade 3: service-account.json local (dev)
     const saPath = path.join(process.cwd(), 'service-account.json');
     if (fs.existsSync(saPath)) {
         try {
@@ -72,22 +81,34 @@ function initAdminApp(): App {
         }
     }
 
-    console.warn('⚠️ Firebase Admin: Nenhuma credencial válida encontrada. Usando mock.');
-    return { name: '[mock]', options: {} } as any;
+    const missing = [];
+    if (!hasKey) missing.push('PRIVATE_KEY');
+    if (!hasEmail) missing.push('CLIENT_EMAIL');
+    
+    console.warn(`⚠️ Firebase Admin: Nenhuma credencial válida encontrada. Faltando: [${missing.join(', ')}]. Usando mock.`);
+    return { name: '[mock]', options: { projectId } } as any;
 }
 
 // Instâncias do Admin SDK - inicializadas de forma segura
 const adminApp: App = initAdminApp();
+const isMock = adminApp.name === '[mock]';
 
 // Evita chamar getFirestore/getAuth se o app for mock (comum no build do Next.js)
-export const adminDb: Firestore = adminApp.name !== '[mock]'
+export const adminDb: Firestore = !isMock
     ? getFirestore(adminApp, process.env.NEXT_PUBLIC_FIREBASE_DATABASE_ID || '(default)')
     : {
-        collection: () => { throw new Error('Firestore indisponível: credenciais ausentes.'); }
+        collection: (name: string) => ({
+            doc: (id: string) => ({ 
+                get: async () => { throw new Error(`Firestore indisponível: Credenciais ausentes (Coleção: ${name}). Verifique as variáveis de ambiente.`); },
+                set: async () => { throw new Error(`Firestore indisponível: Credenciais ausentes.`); }
+            }),
+            where: () => ({ get: async () => { throw new Error(`Firestore indisponível: Credenciais ausentes (Consultando ${name}).`); } })
+        })
     } as any;
 
-export const adminAuth: Auth = adminApp.name !== '[mock]'
+export const adminAuth: Auth = !isMock
     ? getAuth(adminApp)
     : {
-        verifyIdToken: () => { throw new Error('Auth indisponível: credenciais ausentes.'); }
+        verifyIdToken: async () => { throw new Error('Autenticação indisponível: Credenciais de administrador ausentes no servidor.'); }
     } as any;
+
