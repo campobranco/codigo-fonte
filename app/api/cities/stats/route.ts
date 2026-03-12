@@ -112,8 +112,8 @@ export async function GET(req: Request) {
         const status = isAuthError ? 401 : 500;
         return NextResponse.json({ 
             success: false,
-            error: isAuthError ? 'Sessão expirada' : 'Erro interno no servidor',
-            details: error.message 
+            error: error.message,
+            details: isAuthError ? 'AUTH_ERROR' : 'SERVER_ERROR'
         }, { status });
     }
 }

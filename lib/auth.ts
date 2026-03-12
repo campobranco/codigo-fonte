@@ -89,13 +89,16 @@ export async function checkAuth(req?: Request): Promise<AuthorizedUser | null> {
         }
         
         // Se o erro for de inicialização do Admin SDK (mock)
-        if (error.message?.includes('indisponível')) {
-            console.error('[AUTH] Configuração de Admin ausente no servidor');
+        if (error.message?.includes('indisponível') || error.message?.includes('ausentes')) {
+            console.error('[AUTH] Erro de configuração:', error.message);
             throw error;
         }
 
-        console.error('[AUTH] Erro na verificação do token:', error.message);
-        throw new Error('INVALID_TOKEN');
+        console.error('[AUTH] Erro crítico na verificação do token:', error.message);
+        // Lança o erro original ou um mapeado para o status 401
+        const err = new Error(error.message || 'INVALID_TOKEN');
+        (err as any).code = error.code;
+        throw err;
     }
 }
 
