@@ -148,22 +148,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     // window.location.href = '/legal-consent'; // Ativar após migração completa
                 }
             } else {
-                // Primeiro login
-                if (currentUser.email === 'campobrancojw@gmail.com') {
-                    await setDoc(userRef, {
-                        name: 'Admin',
-                        email: currentUser.email,
-                        role: 'ADMIN',
-                        congregationId: null,
-                        updatedAt: serverTimestamp(),
-                        createdAt: serverTimestamp()
-                    });
-                    setProfileName('Admin');
-                    setActualRole('ADMIN');
-                } else {
-                    setProfileName(currentUser.displayName || currentUser.email);
-                    setActualRole('PUBLICADOR');
-                }
+                // Primeiro login - Criar perfil no Firestore
+                const newUserProfile = {
+                    name: currentUser.displayName || (currentUser.email === 'campobrancojw@gmail.com' ? 'Admin' : 'Membro'),
+                    email: currentUser.email,
+                    role: (currentUser.email === 'campobrancojw@gmail.com' ? 'ADMIN' : 'PUBLICADOR') as any,
+                    congregationId: null,
+                    updatedAt: serverTimestamp(),
+                    createdAt: serverTimestamp()
+                };
+
+                await setDoc(userRef, newUserProfile);
+                setProfileName(newUserProfile.name);
+                setActualRole(newUserProfile.role);
+                setCongregationId(null);
             }
         } catch (error) {
             console.error("Erro ao buscar perfil do usuário:", error);
