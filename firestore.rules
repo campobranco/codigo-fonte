@@ -16,19 +16,19 @@ service cloud.firestore {
     }
 
     function getAuthCongregationId() {
-      let tokenCongId = request.auth.token.get('congregationId', request.auth.token.get('congregation_id', ''));
-      if (tokenCongId != '') return tokenCongId;
-      // Fallback para buscar no banco se o token estiver limpo
-      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
-      return exists(userPath) ? get(userPath).data.get('congregationId', get(userPath).data.get('congregation_id', '')) : '';
+      return request.auth.token.get('congregationId', request.auth.token.get('congregation_id', '')) != '' 
+        ? request.auth.token.get('congregationId', request.auth.token.get('congregation_id', ''))
+        : (exists(/databases/$(database)/documents/users/$(request.auth.uid)) 
+            ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('congregationId', get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('congregation_id', '')) 
+            : '');
     }
 
     function getAuthRole() {
-      let tokenRole = request.auth.token.get('role', '');
-      if (tokenRole != '') return tokenRole;
-      // Fallback para buscar no banco se o token estiver limpo
-      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
-      return exists(userPath) ? get(userPath).data.get('role', 'PUBLICADOR') : 'PUBLICADOR';
+      return request.auth.token.get('role', '') != ''
+        ? request.auth.token.get('role', '')
+        : (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'PUBLICADOR')
+            : 'PUBLICADOR');
     }
 
     function isAdmin() {
@@ -42,20 +42,18 @@ service cloud.firestore {
     }
     
     function isServant() {
-      let role = getAuthRole();
       return isAuthenticated() && (
              isElder() || 
-             role == 'SERVO' || 
+             getAuthRole() == 'SERVO' || 
              'SERVO' in request.auth.token.get('roles', []) ||
              'ANCIAO' in request.auth.token.get('roles', [])
       );
     }
 
     function isPublisher() {
-      let role = getAuthRole();
       return isAuthenticated() && (
              isServant() ||
-             role == 'PUBLICADOR' ||
+             getAuthRole() == 'PUBLICADOR' ||
              'PUBLICADOR' in request.auth.token.get('roles', [])
       );
     }
@@ -78,28 +76,21 @@ service cloud.firestore {
 
     // Verifica se os dados solicitados pertencem à congregação do usuário
     function belongsToUserCongregation(docData) {
-      let userCongId = getAuthCongregationId();
-      let docCongId = docData.get('congregationId', docData.get('congregation_id', ''));
-      
-      // Admin ignora o isolamento
-      return isAuthenticated() && (isAdmin() || (docCongId == userCongId && userCongId != ""));
+      return isAuthenticated() && (
+        isAdmin() || (
+          docData.get('congregationId', docData.get('congregation_id', '')) == getAuthCongregationId() && 
+          getAuthCongregationId() != ""
+        )
+      );
     }
 
     // Garante que o congregationId não possa ser alterado durante uma atualização
     function congregationIdIsImmutable() {
-       let oldId = resource.data.get('congregationId', resource.data.get('congregation_id', ''));
-       let newId = request.resource.data.get('congregationId', request.resource.data.get('congregation_id', ''));
-       return oldId == newId;
+       return resource.data.get('congregationId', resource.data.get('congregation_id', '')) == 
+              request.resource.data.get('congregationId', request.resource.data.get('congregation_id', ''));
     }
 
-    // --- SECURITY LOCK COLLECTION ---
-    match /config/security {
-       // Lockbox: Ninguém pode editar isso após a criação
-       allow read: if false; // Uso apenas interno
-       // Permite criação APENAS se não existir E o criador marcar para si mesmo
-       allow create: if isAuthenticated() && request.resource.data.adminUid == request.auth.uid; 
-       allow update, delete: if false; 
-    }
+
 
     // --- Collection Rules ---
 
