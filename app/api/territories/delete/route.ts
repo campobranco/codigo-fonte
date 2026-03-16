@@ -53,6 +53,24 @@ export async function POST(req: Request) {
         const allAddrDocs = [...addrSnap1.docs, ...addrSnap2.docs];
 
         if (allAddrDocs.length > 0) {
+            // Para cada endereço, excluir suas visitas primeiro
+            for (const addrDoc of allAddrDocs) {
+                const addressId = addrDoc.id;
+                
+                // Buscar visitas vinculadas ao endereço (subcoleção)
+                const visitsSnap = await adminDb.collection('addresses').doc(addressId).collection('visits').get();
+                
+                if (!visitsSnap.empty) {
+                    // Excluir visitas em batch
+                    const visitBatch = adminDb.batch();
+                    visitsSnap.docs.forEach(visitDoc => {
+                        visitBatch.delete(visitDoc.ref);
+                    });
+                    await visitBatch.commit();
+                    console.log(`[TERRITORY_DELETE] Endereço ${addressId}: ${visitsSnap.size} visitas excluídas`);
+                }
+            }
+            
             // Firestore tem limite de 500 operações por batch
             const chunks = [];
             for (let i = 0; i < allAddrDocs.length; i += 400) {

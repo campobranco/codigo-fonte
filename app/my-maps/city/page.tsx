@@ -229,10 +229,12 @@ function CityListContent() {
                 const territoryCityMap: Record<string, string> = {};
 
                 territories.forEach((t: any) => {
-                    console.log('[DEBUG] Processing territory:', t.id, t.name, 'city_id:', t.city_id);
-                    if (t.city_id) {
-                        cityTotals[t.city_id] = (cityTotals[t.city_id] || 0) + 1;
-                        territoryCityMap[t.id] = t.city_id;
+                    console.log('[DEBUG] Processing territory:', t.id, t.name, 'city_id:', t.city_id, 'cityId:', t.cityId);
+                    // Aceita ambos os padrões: city_id (legado) e cityId (novo)
+                    const cityId = t.city_id || t.cityId;
+                    if (cityId) {
+                        cityTotals[cityId] = (cityTotals[cityId] || 0) + 1;
+                        territoryCityMap[t.id] = cityId;
                     }
                 });
 
@@ -243,11 +245,13 @@ function CityListContent() {
                 const completedVolumeByCity: Record<string, number> = {};
 
                 history.forEach((h: any) => {
-                    if (h.territory_id) {
-                        const cId = territoryCityMap[h.territory_id];
+                    // Aceita ambos os padrões: territory_id (legado) e territoryId (novo)
+                    const territoryId = h.territory_id || h.territoryId;
+                    if (territoryId) {
+                        const cId = territoryCityMap[territoryId];
                         if (cId) {
                             if (!completedUniqueByCity[cId]) completedUniqueByCity[cId] = new Set();
-                            completedUniqueByCity[cId].add(h.territory_id);
+                            completedUniqueByCity[cId].add(territoryId);
                             completedVolumeByCity[cId] = (completedVolumeByCity[cId] || 0) + 1;
                         }
                     } else if (h.items && h.items.length > 0) {
@@ -265,16 +269,21 @@ function CityListContent() {
                 const statusByCity: Record<string, { contacted: number, not_contacted: number, moved: number, do_not_visit: number, total_visits: number }> = {};
 
                 addresses.forEach((a: any) => {
-                    const cId = a.city_id || (a.territory_id ? territoryCityMap[a.territory_id] : null);
+                    // Aceita ambos os padrões: city_id/territory_id (legado) e cityId/territoryId (novo)
+                    const cityId = a.city_id || a.cityId;
+                    const territoryId = a.territory_id || a.territoryId;
+                    const cId = cityId || (territoryId ? territoryCityMap[territoryId] : null);
                     if (!cId) return;
 
                     if (!statusByCity[cId]) statusByCity[cId] = { contacted: 0, not_contacted: 0, moved: 0, do_not_visit: 0, total_visits: 0 };
 
                     statusByCity[cId].total_visits++;
-                    if (a.visit_status === 'contacted') statusByCity[cId].contacted++;
-                    else if (a.visit_status === 'not_contacted') statusByCity[cId].not_contacted++;
-                    else if (a.visit_status === 'moved') statusByCity[cId].moved++;
-                    else if (a.visit_status === 'do_not_visit') statusByCity[cId].do_not_visit++;
+                    // Aceita ambos os padrões para visit_status
+                    const visitStatus = a.visit_status || a.visitStatus;
+                    if (visitStatus === 'contacted') statusByCity[cId].contacted++;
+                    else if (visitStatus === 'not_contacted') statusByCity[cId].not_contacted++;
+                    else if (visitStatus === 'moved') statusByCity[cId].moved++;
+                    else if (visitStatus === 'do_not_visit') statusByCity[cId].do_not_visit++;
                 });
 
                 const stats: Record<string, {

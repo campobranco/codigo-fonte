@@ -21,10 +21,17 @@ import {
     LogOut,
     AlertCircle
 } from 'lucide-react';
-import MapView from '@/app/components/MapView';
-import BottomNav from '@/app/components/BottomNav';
-import NewPointModal from '@/app/components/Witnessing/NewPointModal';
-import EditPointModal from '@/app/components/Witnessing/EditPointModal';
+import dynamic from 'next/dynamic';
+
+import { MapSkeleton } from '@/app/components/Skeleton';
+
+const MapView = dynamic(() => import('@/app/components/MapView'), {
+    loading: () => <MapSkeleton />,
+    ssr: false
+});
+const BottomNav = dynamic(() => import('@/app/components/BottomNav'), { ssr: false });
+const NewPointModal = dynamic(() => import('@/app/components/Witnessing/NewPointModal'));
+const EditPointModal = dynamic(() => import('@/app/components/Witnessing/EditPointModal'));
 import UserAvatar from '@/app/components/UserAvatar';
 import AssignedUserBadge from '@/app/components/AssignedUserBadge';
 import ConfirmationModal from '@/app/components/ConfirmationModal';

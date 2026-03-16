@@ -37,9 +37,27 @@ export async function GET(req: Request) {
             .where('congregationId', '==', congregationId);
 
         if (territoryId) {
+            // Tenta ambos os padrões: territoryId (novo) e territory_id (legado)
             query = query.where('territoryId', '==', territoryId);
+            const addressSnap = await query.get();
+            
+            // Se não encontrar resultados com territoryId, tenta com territory_id
+            if (addressSnap.empty) {
+                query = adminDb.collection('addresses')
+                    .where('congregationId', '==', congregationId)
+                    .where('territory_id', '==', territoryId);
+            }
         } else {
+            // Tenta ambos os padrões: cityId (novo) e city_id (legado)
             query = query.where('cityId', '==', cityId);
+            const addressSnap = await query.get();
+            
+            // Se não encontrar resultados com cityId, tenta com city_id
+            if (addressSnap.empty) {
+                query = adminDb.collection('addresses')
+                    .where('congregationId', '==', congregationId)
+                    .where('city_id', '==', cityId);
+            }
         }
 
         const addressSnap = await query.get();
@@ -64,7 +82,8 @@ export async function GET(req: Request) {
                 isNeurodivergent: data.isNeurodivergent || data.is_neurodivergent,
                 observations: data.observations,
                 sortOrder: data.sortOrder ?? data.sort_order ?? 999999,
-                inactivatedAt: data.inactivatedAt || data.inactivated_at
+                inactivatedAt: data.inactivatedAt || data.inactivated_at,
+                residentsCount: data.residentsCount || data.residents_count || data.people_count || 1
             };
         });
 
@@ -103,6 +122,9 @@ export async function GET(req: Request) {
                 last_visited_at: lastVisit?.createdAt?.toDate?.()?.toISOString() || null
             };
         });
+
+        // Ordena por sortOrder no lado do cliente (temporário até o índice ficar pronto)
+        addressesWithStatus.sort((a: any, b: any) => (a.sortOrder ?? 999999) - (b.sortOrder ?? 999999));
 
         return NextResponse.json({ success: true, addresses: addressesWithStatus });
     } catch (error: any) {

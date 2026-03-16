@@ -133,13 +133,13 @@ export default function FloatingReportButton() {
     if (isOpen) {
         return (
             <div id="floating-report-button" className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-                <div className="bg-white dark:bg-slate-900 rounded-lg w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+                <div className="bg-white dark:bg-slate-900 rounded-md w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
                     <div className="p-4 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center">
                         <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
                             <Bug className="w-5 h-5 text-red-500" />
                             Reportar Problema
                         </h3>
-                        <button onClick={() => setIsOpen(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full text-gray-500 dark:text-gray-400">
+                        <button onClick={() => setIsOpen(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-md text-gray-500 dark:text-gray-400">
                             <X className="w-5 h-5" />
                         </button>
                     </div>
@@ -148,7 +148,7 @@ export default function FloatingReportButton() {
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-muted uppercase">Captura de Tela</label>
                             {screenshot && (
-                                <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-slate-700 w-full h-48 bg-gray-100 dark:bg-slate-800 relative group">
+                                <div className="rounded-md overflow-hidden border border-gray-200 dark:border-slate-700 w-full h-48 bg-gray-100 dark:bg-slate-800 relative group">
                                     <Image src={screenshot} alt="Screenshot" fill className="object-contain" />
                                 </div>
                             )}
@@ -160,7 +160,7 @@ export default function FloatingReportButton() {
                                 value={description}
                                 onChange={(e) => setDescription(e.target.value)}
                                 placeholder="Descreva o que aconteceu..."
-                                className="w-full bg-gray-50 dark:bg-slate-800/50 border border-gray-200 dark:border-slate-700 rounded-xl p-4 text-sm min-h-[100px] focus:ring-2 focus:ring-primary-light/500/20 focus:outline-none dark:text-white"
+                                className="w-full bg-gray-50 dark:bg-slate-800/50 border border-gray-200 dark:border-slate-700 rounded-md p-4 text-sm min-h-[100px] focus:ring-2 focus:ring-primary-light/500/20 focus:outline-none dark:text-white"
                             />
                         </div>
                     </div>
@@ -168,14 +168,14 @@ export default function FloatingReportButton() {
                     <div className="p-4 border-t border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50 flex justify-end gap-3">
                         <button
                             onClick={() => setIsOpen(false)}
-                            className="px-6 py-2.5 rounded-lg font-bold text-sm text-gray-500 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-slate-800"
+                            className="px-6 py-2.5 rounded-md font-bold text-sm text-gray-500 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-slate-800"
                         >
                             Cancelar
                         </button>
                         <button
                             onClick={handleSubmit}
                             disabled={loading}
-                            className="px-6 py-2.5 rounded-xl font-bold text-sm bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/20 flex items-center gap-2 disabled:opacity-50"
+                            className="px-6 py-2.5 rounded-md font-bold text-sm bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/20 flex items-center gap-2 disabled:opacity-50"
                         >
                             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Enviar Relatório'}
                         </button>

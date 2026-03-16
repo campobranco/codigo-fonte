@@ -10,7 +10,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 export async function POST(req: Request) {
     try {
         // Verifica autenticação e permissões (Ancião ou de maior nível)
-        const user = await requireAuth(['ANCIAO', 'SERVO', 'ADMIN']);
+        const user = await requireAuth(req, ['ANCIAO', 'SERVO', 'ADMIN']);
 
         const body = await req.json();
         const { id, name, uf, parentCity, parent_city, lat, lng } = body;
@@ -30,7 +30,8 @@ export async function POST(req: Request) {
         const cityData = cityDoc.data();
 
         // Se for Ancião/Servo, só pode atualizar da própria congregação
-        if (user.role !== 'ADMIN' && cityData?.congregationId !== user.congregationId) {
+        const cityCongregationId = cityData?.congregationId || cityData?.congregation_id;
+        if (user.role !== 'ADMIN' && cityCongregationId !== user.congregationId) {
             return NextResponse.json({ error: 'Você só pode atualizar itens da sua congregação.' }, { status: 403 });
         }
 

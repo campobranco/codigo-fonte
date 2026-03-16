@@ -87,7 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
                 // Salva o token no cookie para uso nas API routes (servidor)
                 try {
-                    const token = await firebaseUser.getIdToken();
+                    const token = await firebaseUser.getIdToken(true); // Force refresh
                     // Configuração de cookie: Lax permite envio em navegação top-level vinda de outros sites.
                     // path=/ garante que o cookie chegue em todas as APIs.
                     const isSecure = window.location.protocol === 'https:';
@@ -115,6 +115,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const fetchUserProfile = async (currentUser: User) => {
         try {
             const userRef = doc(db, 'users', currentUser.uid);
+            console.log(`[DEBUG] Buscando perfil: users/${currentUser.uid} no banco: ${db.app.options.projectId}`);
             const userSnap = await getDoc(userRef);
 
             if (userSnap.exists()) {
@@ -137,6 +138,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     setActualRole(data.role || 'PUBLICADOR');
                     setCongregationId(data.congregationId || null);
                     setProfileName(data.name || currentUser.displayName || currentUser.email);
+                    console.log(`[DEBUG] Perfil carregado: role=${data.role}, congregationId=${data.congregationId}, name=${data.name}`);
                 }
 
                 setNotificationsEnabledInternal(data.notificationsEnabled ?? true);

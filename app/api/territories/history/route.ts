@@ -8,7 +8,7 @@ import { requireAuth } from '@/lib/auth';
 
 export async function GET(req: Request) {
     try {
-        const user = await requireAuth();
+        const user = await requireAuth(req);
 
         const { searchParams } = new URL(req.url);
         let congregationId = searchParams.get('congregationId');

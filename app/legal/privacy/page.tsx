@@ -139,10 +139,33 @@ export default function PrivacyPage() {
                     O uso contínuo do Campo Branco após eventuais alterações implica ciência e concordância com a versão vigente.
                 </p>
 
-                <h3>11. CONTATO</h3>
+                <h3>11. CONTATO E ENCARREGADO (DPO)</h3>
                 <p>
-                    Para dúvidas, solicitações ou esclarecimentos relacionados à privacidade e proteção de dados pessoais, utilize o canal de suporte disponível no aplicativo ou o e-mail administrativo informado na plataforma.
+                    Para dúvidas, solicitações ou esclarecimentos relacionados à privacidade e proteção de dados pessoais, o Campo Branco disponibiliza canais específicos em conformidade com a LGPD.
                 </p>
+
+                <h4>11.1. ENCARREGADO DE PROTEÇÃO DE DADOS (DPO)</h4>
+                <p>
+                    O Encarregado de Proteção de Dados (DPO) é o ponto de contato entre os titulares de dados, o Campo Branco e a Autoridade Nacional de Proteção de Dados (ANPD). Suas responsabilidades incluem:
+                </p>
+                <ul className="list-disc pl-5 space-y-2 marker:text-emerald-500">
+                    <li>Receber e responder às solicitações dos titulares de dados</li>
+                    <li>Orientar sobre as melhores práticas de proteção de dados</li>
+                    <li>Atuar como canal de comunicação com a ANPD</li>
+                </ul>
+                <p>
+                    <strong>Contato do DPO:</strong> <a href="mailto:campobrancojw@gmail.com" className="text-emerald-600 dark:text-emerald-400 no-underline hover:underline">campobrancojw@gmail.com</a>
+                </p>
+
+                <h4>11.2. CANAIS DE SOLICITAÇÃO LGPD</h4>
+                <p>
+                    Os titulares podem exercer seus direitos através de:
+                </p>
+                <ul className="list-disc pl-5 space-y-2 marker:text-emerald-500">
+                    <li><strong>Solicitações:</strong> <a href="mailto:lgpd@campobranco.com" className="text-emerald-600 dark:text-emerald-400 no-underline hover:underline">lgpd@campobranco.com</a></li>
+                    <li><strong>Privacidade:</strong> <a href="mailto:privacy@campobranco.com" className="text-emerald-600 dark:text-emerald-400 no-underline hover:underline">privacy@campobranco.com</a></li>
+                    <li><strong>Incidentes de Segurança:</strong> <a href="mailto:security@campobranco.com" className="text-emerald-600 dark:text-emerald-400 no-underline hover:underline">security@campobranco.com</a></li>
+                </ul>
             </section>
         </article>
     );

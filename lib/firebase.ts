@@ -28,6 +28,6 @@ if (typeof window !== 'undefined') {
     });
 }
 
-export const db: Firestore = getFirestore(app, process.env.NEXT_PUBLIC_FIREBASE_DATABASE_ID || '(default)');
+export const db: Firestore = getFirestore(app, process.env.NEXT_PUBLIC_FIREBASE_DATABASE_ID || 'campobrancodev');
 export { app, auth };
 

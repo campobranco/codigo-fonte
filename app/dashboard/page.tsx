@@ -54,6 +54,7 @@ import Link from "next/link";
 import BottomNav from "@/app/components/BottomNav";
 import ActionCenter, { IdleTerritory } from "@/app/components/Dashboard/ActionCenter";
 import VisitsHistory from "@/app/components/Dashboard/VisitsHistory";
+import ConfirmationModal from "@/app/components/ConfirmationModal";
 
 // --- UTILS ---
 
@@ -427,13 +428,25 @@ export default function DashboardPage() {
                 const visitsCount = visitsCountSnap.data().count;
                 const historyData = historySnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })) as any[];
 
-                // 1. Validate Cities
+                // 1. Mapeia cidades válidas
                 const validCityIds = new Set(citiesData?.map(c => c.id) || []);
                 const cityMap: Record<string, string> = {};
                 citiesData?.forEach(c => cityMap[c.id] = c.name);
 
-                // 2. Validate Territories
-                const validTerritories = territoriesData?.filter(t => t.city_id && validCityIds.has(t.city_id)) || [];
+                // 2. Valida territórios — aceita tanto cityId (camelCase) quanto city_id (snake_case)
+                // Se não houver cidades no Firestore com congregationId correspondente,
+                // usa todos os territórios da congregação (fallback para evitar contagem zero incorreta)
+                let validTerritories = territoriesData?.filter(t => {
+                    const tCityId = t.cityId || t.city_id; // suporte para ambos os formatos de campo
+                    return tCityId && validCityIds.has(tCityId);
+                }) || [];
+
+                // Fallback: se cidades não retornaram mas territórios sim, conta todos os territórios
+                if (validTerritories.length === 0 && territoriesData.length > 0) {
+                    console.warn('[Dashboard] Nenhuma cidade válida encontrada para validação de territórios. Usando todos os territórios da congregação como fallback.');
+                    validTerritories = territoriesData;
+                }
+
                 const validTerritoryIds = new Set(validTerritories.map(t => t.id));
 
                 // 3. Process History for Coverage
@@ -495,7 +508,7 @@ export default function DashboardPage() {
                             name: data.name || 'Sem Nome',
                             description: data.notes || '',
                             city: cityName,
-                            city_id: data.city_id,
+                            city_id: data.cityId || data.city_id, // suporte a camelCase e snake_case
                             lastVisit: null,
                             variant: 'danger'
                         });
@@ -505,7 +518,7 @@ export default function DashboardPage() {
                             name: data.name || 'Sem Nome',
                             description: data.notes || '',
                             city: cityName,
-                            city_id: data.city_id,
+                            city_id: data.cityId || data.city_id, // suporte a camelCase e snake_case
                             lastVisit: lastAnyDate,
                             variant: 'warning'
                         });
@@ -977,6 +990,17 @@ export default function DashboardPage() {
                 </div>
             )}
             <BottomNav />
+            {/* Confirmation Modal */}
+            {confirmModal && (
+                <ConfirmationModal
+                    isOpen={!!confirmModal}
+                    onClose={() => setConfirmModal(null)}
+                    onConfirm={confirmModal.onConfirm}
+                    title={confirmModal.title}
+                    description={confirmModal.message}
+                    variant={confirmModal.variant as any}
+                />
+            )}
         </div>
     );
 }

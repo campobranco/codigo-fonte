@@ -90,7 +90,6 @@ export default function RootLayout({
             <FloatingReportButton />
             <CookieBanner />
             <Toaster richColors position="top-center" />
-            <Analytics />
             <main className="app-shell flex-1">
               {children}
             </main>

@@ -55,6 +55,24 @@
       ]
     },
     {
+      "collectionGroup": "addresses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "congregationId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "territoryId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "users",
       "queryScope": "COLLECTION",
       "fields": [
@@ -107,6 +125,42 @@
         {
           "fieldPath": "createdAt",
           "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "witnessingPoints",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "cityId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "congregationId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "name",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "visits",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "congregationId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
         }
       ]
     }

@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { MapPin, Clock, MoreVertical, Edit, Trash2, ExternalLink, User, CheckCircle, AlertCircle } from 'lucide-react';
 import { updateWitnessingPointStatus, deleteWitnessingPoint } from '@/app/actions/witnessing';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
+import ConfirmationModal from '@/app/components/ConfirmationModal';
 
 interface WitnessingPoint {
     id: string;
@@ -29,7 +31,10 @@ export default function PointList({ points, isAdmin, currentUserParams }: PointL
     const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
     const handleCheckIn = async (point: WitnessingPoint) => {
-        if (!currentUserParams?.name) return alert("Erro: Usuário não identificado");
+        if (!currentUserParams?.name) {
+            toast.error("Erro: Usuário não identificado");
+            return;
+        }
         setLoadingId(point.id);
         try {
             // Simple logic: if empty, add user. if occupied, append? 
@@ -47,8 +52,9 @@ export default function PointList({ points, isAdmin, currentUserParams }: PointL
             }
 
             await updateWitnessingPointStatus(point.id, 'OCCUPIED', currentNames.join(', '));
+            toast.success("Check-in realizado com sucesso!");
         } catch (postError) {
-            alert("Erro ao fazer check-in");
+            toast.error("Erro ao fazer check-in");
         } finally {
             setLoadingId(null);
         }
@@ -66,17 +72,34 @@ export default function PointList({ points, isAdmin, currentUserParams }: PointL
             const newPublishers = newNames.length === 0 ? null : newNames.join(', ');
 
             await updateWitnessingPointStatus(point.id, newStatus, newPublishers);
+            toast.success("Checkout realizado!");
         } catch (err) {
-            alert("Erro ao sair");
+            toast.error("Erro ao sair");
         } finally {
             setLoadingId(null);
         }
     };
 
-    const handleDelete = async (id: string) => {
-        if (!confirm("Tem certeza que deseja excluir?")) return;
-        await deleteWitnessingPoint(id);
-        router.refresh();
+    const [pointToDelete, setPointToDelete] = useState<string | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
+
+    const handleDeleteClick = (id: string) => {
+        setPointToDelete(id);
+    };
+
+    const confirmDelete = async () => {
+        if (!pointToDelete) return;
+        setIsDeleting(true);
+        try {
+            await deleteWitnessingPoint(pointToDelete);
+            toast.success("Ponto de testemunho excluído!");
+            router.refresh();
+        } catch (e) {
+            toast.error("Erro ao excluir");
+        } finally {
+            setIsDeleting(false);
+            setPointToDelete(null);
+        }
     };
 
     const toggleMenu = (id: string) => {
@@ -132,7 +155,7 @@ export default function PointList({ points, isAdmin, currentUserParams }: PointL
                                                 <Edit className="w-3 h-3" /> Editar
                                             </button>
                                             <button
-                                                onClick={() => handleDelete(point.id)}
+                                                onClick={() => handleDeleteClick(point.id)}
                                                 className="w-full text-left px-4 py-3 text-xs font-bold text-red-500 hover:bg-red-50 flex items-center gap-2"
                                             >
                                                 <Trash2 className="w-3 h-3" /> Excluir
@@ -190,6 +213,17 @@ export default function PointList({ points, isAdmin, currentUserParams }: PointL
                     </div>
                 );
             })}
+            {/* Modal de Confirmação para Exclusão */}
+            <ConfirmationModal
+                isOpen={!!pointToDelete}
+                onClose={() => setPointToDelete(null)}
+                onConfirm={confirmDelete}
+                title="Excluir Ponto"
+                message="Tem certeza que deseja excluir este ponto de testemunho? Esta ação não pode ser desfeita."
+                confirmText="Excluir"
+                isLoading={isDeleting}
+                variant="danger"
+            />
         </div>
     );
 }
