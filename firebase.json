@@ -18,9 +18,15 @@
         ]
       }
     ],
-    "frameworksBackend": {
-      "region": "us-central1"
-    }
+    "rewrites": [
+      {
+        "source": "**",
+        "run": {
+          "serviceId": "campo-branco",
+          "region": "us-central1"
+        }
+      }
+    ]
   },
   "firestore": [
     {
