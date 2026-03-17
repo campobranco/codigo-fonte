@@ -58,8 +58,22 @@ const withPWA = require("@ducanh2912/next-pwa").default({
     scope: "/",
     workboxOptions: {
         disableDevLogs: true,
-        // Evita cache de URLs externas em desenvolvimento
         cleanupOutdatedCaches: true,
+        // Força o Service Worker a verificar o servidor para o arquivo principal (index.html)
+        // para que novos cabeçalhos de CSP sejam aplicados imediatamente
+        runtimeCaching: [
+            {
+                urlPattern: /^https:\/\/.*\.web\.app.*$/,
+                handler: 'NetworkFirst',
+                options: {
+                    cacheName: 'documents-cache',
+                    expiration: {
+                        maxEntries: 5,
+                        maxAgeSeconds: 60, // Apenas 1 minuto de cache
+                    },
+                },
+            },
+        ],
     },
 });
 
