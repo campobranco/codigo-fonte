@@ -148,7 +148,7 @@ export async function GET(req: Request) {
             success: false,
             error: error.message || "Internal Server Error",
             code: isAuthError ? 'AUTH_ERROR' : 'SERVER_ERROR',
-            details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            details: error.stack // Expondo temporariamente para debug em produção
         }, { status });
     }
 }
