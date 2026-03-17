@@ -1,7 +1,8 @@
+```yaml
 # Settings for Backend (on Cloud Run).
 # See https://firebase.google.com/docs/app-hosting/configure#cloud-run
 runConfig:
-  region: southamerica-east1
+  region: us-central1
   minInstances: 0
   maxInstances: 10
   concurrency: 80
