@@ -102,7 +102,11 @@ export default function VisitsHistory({ scope = 'all', showViewAll = true }: { s
 
                 await Promise.all(chunkedAddressIds.map(async (chunk) => {
                     // Usamos documentId() para buscar pelos IDs reais dos documentos
-                    const qAddr = query(collection(db, 'addresses'), where(documentId(), 'in', chunk));
+                    const qAddr = query(
+                        collection(db, 'addresses'), 
+                        where(documentId(), 'in', chunk),
+                        where('congregationId', '==', congregationId)
+                    );
                     const addrSnap = await getDocs(qAddr);
                     addrSnap.forEach(docSnap => addressMap[docSnap.id] = docSnap.data().street);
                 }));
@@ -116,7 +120,11 @@ export default function VisitsHistory({ scope = 'all', showViewAll = true }: { s
                 }
 
                 await Promise.all(chunkedUserIds.map(async (chunk) => {
-                    const qUser = query(collection(db, 'users'), where(documentId(), 'in', chunk));
+                    const qUser = query(
+                        collection(db, 'users'), 
+                        where(documentId(), 'in', chunk),
+                        where('congregationId', '==', congregationId)
+                    );
                     const userSnap = await getDocs(qUser);
                     userSnap.forEach(docSnap => userMap[docSnap.id] = docSnap.data().name);
                 }));

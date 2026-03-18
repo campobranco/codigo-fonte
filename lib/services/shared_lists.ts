@@ -298,8 +298,9 @@ export async function processSharedListAction(id: string, action: string, payloa
             }
 
             await updateDoc(listRef, {
-                assignedTo: userId,
-                assignedName: userName || 'Irmão sem Nome'
+                assigned_to: userId,
+                assigned_name: userName || 'Irmão sem Nome',
+                status: 'active'
             });
 
             // Vincula o usuário à congregação da lista se ele ainda não tiver

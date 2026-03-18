@@ -4,7 +4,7 @@ import { Loader2 } from 'lucide-react';
 
 export default function Loading() {
     return (
-        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center">
+        <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center">
             <div className="relative">
                 <div className="absolute inset-0 bg-primary/20 blur-2xl rounded-full scale-150 animate-pulse" />
                 <div className="relative p-6">

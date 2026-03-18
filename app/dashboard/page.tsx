@@ -13,7 +13,6 @@ import {
     where,
     orderBy,
     limit,
-    getCountFromServer,
     serverTimestamp,
     deleteDoc,
     updateDoc
@@ -408,24 +407,24 @@ export default function DashboardPage() {
                 const [
                     citiesSnap,
                     territoriesSnap,
-                    addressesCountSnap,
-                    pointsCountSnap,
-                    visitsCountSnap,
+                    addressesSnap,
+                    pointsSnap,
+                    visitsSnap,
                     historySnap
                 ] = await Promise.all([
                     getDocs(qCities),
                     getDocs(qTerritories),
-                    getCountFromServer(qAddresses),
-                    getCountFromServer(qPoints),
-                    getCountFromServer(qVisits),
+                    getDocs(qAddresses),
+                    getDocs(qPoints),
+                    getDocs(qVisits),
                     getDocs(qHistory)
                 ]);
 
                 const citiesData = citiesSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })) as any[];
                 const territoriesData = territoriesSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })) as any[];
-                const addressesCount = addressesCountSnap.data().count;
-                const pointsCount = pointsCountSnap.data().count;
-                const visitsCount = visitsCountSnap.data().count;
+                const addressesCount = addressesSnap.size;
+                const pointsCount = pointsSnap.size;
+                const visitsCount = visitsSnap.size;
                 const historyData = historySnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })) as any[];
 
                 // 1. Mapeia cidades válidas

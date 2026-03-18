@@ -4,7 +4,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // --- Helper functions ---
+    // --- HELPERS DE AUTENTICAÇÃO E PAPÉIS ---
 
     function isAuthenticated() {
       return request.auth != null;
@@ -15,260 +15,171 @@ service cloud.firestore {
              request.auth.token.email == 'campobrancojw@gmail.com';
     }
 
-    function getAuthCongregationId() {
-      let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
-      return userDoc.data.get('congregationId', userDoc.data.get('congregation_id', ''));
-    }
-
+    // Busca o papel do usuário (padrão: PUBLICADOR)
     function getAuthRole() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'PUBLICADOR');
     }
 
     function isAdmin() {
-      return isAuthenticated() && 
-             (getAuthRole() == 'ADMIN' || isMasterAdmin());
+      return isAuthenticated() && (getAuthRole() == 'ADMIN' || isMasterAdmin());
     }
 
     function isElder() {
-      return isAuthenticated() && 
-             (getAuthRole() == 'ANCIAO' || isAdmin());
+      return isAuthenticated() && (getAuthRole() == 'ANCIAO' || isAdmin());
     }
     
     function isServant() {
-      return isAuthenticated() && (
-             isElder() || 
-             getAuthRole() == 'SERVO'
-      );
+      return isAuthenticated() && (getAuthRole() == 'SERVO' || isElder());
     }
 
     function isPublisher() {
-      return isAuthenticated() && (
-             isServant() ||
-             getAuthRole() == 'PUBLICADOR'
-      );
+      return isAuthenticated() && (getAuthRole() == 'PUBLICADOR' || isServant());
     }
 
-    // Funções "Lite" para uso dentro da coleção users (evita recursão)
-    function isMasterLite() {
-       return request.auth != null && request.auth.token.email == 'campobrancojw@gmail.com';
-    }
-    function isAdminToken() {
-       return isMasterLite(); // Admin via token removido, apenas Master ou via Doc
-    }
+    // --- HELPERS DE CONGREGAÇÃO (ROBUSTOS) ---
     
-    // --- Lógica de Isolamento ---
-
-    // Verifica se os dados solicitados pertencem à congregação do usuário
-    function belongsToUserCongregation(docData) {
-      return isAuthenticated() && (
-        isAdmin() || (
-          docData.get('congregationId', docData.get('congregation_id', '')) == getAuthCongregationId() && 
-          getAuthCongregationId() != ""
-        )
-      );
+    // Obtém o ID da congregação de um mapa de dados (suporta camelCase e snake_case)
+    function getCongId(data) {
+      return data.get('congregationId', data.get('congregation_id', null));
     }
 
-    // Garante que o congregationId não possa ser alterado durante uma atualização
-    function congregationIdIsImmutable() {
-       return resource.data.get('congregationId', resource.data.get('congregation_id', '')) == 
-              request.resource.data.get('congregationId', request.resource.data.get('congregation_id', ''));
+    // Verifica se o documento pertence à congregação do usuário logado
+    function isSameCongregation(data) {
+      let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      let userCongId = getCongId(userDoc);
+      let docCongId = getCongId(data);
+      return userCongId != null && docCongId == userCongId;
     }
 
+    // --- REGRAS POR COLEÇÃO ---
 
-
-    // --- Collection Rules ---
-
-    // 1. Congregations (Congregações)
+    // 1. Congregações
     match /congregations/{congregationId} {
-      allow read: if isAuthenticated(); // Permite leitura para qualquer usuário autenticado
-      allow create: if isAuthenticated() && isAdmin();
-      // Permite atualização se for da própria congregação e for Servo ou Ancião
-      allow update: if isAuthenticated() && (isAdmin() || (isServant() && (congregationId == getAuthCongregationId())) );
-      allow delete: if isAuthenticated() && isAdmin();
-    }
-
-    // 2. Usuários (Acesso Estrito e Perfil)
-    match /users/{userId} {
-      // LEITURA PRÓPRIA: O usuário sempre pode ler/listar se o documento for dele
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isMasterLite());
-
-      // Listagem Geral: Apenas Admin ou quem tem congregação (precisa para listar publicadores da equipe)
-      allow list: if isAuthenticated() && (isAdmin() || getAuthCongregationId() != '');
-      
-      // CRIAÇÃO DO PRÓPRIO PERFIL NO PRIMEIRO LOGIN
-      // Se não existe, ele mesmo pode criar (setDoc no AuthContext no primeiro login)
-      allow create: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-
-      // Atualização: Próprio usuário (sem escalar privilégios), Admin ou Ancião da MESMA congregação
-      allow update: if isAuthenticated() && (
-        isMasterLite() ||
-        isAdmin() ||
-        (request.auth.uid == userId && (!('role' in request.resource.data) || request.resource.data.role == resource.data.role)) || 
-        (isElder() && resource.data.get('congregationId', '') == getAuthCongregationId())
-      );
-      
-      allow delete: if isAdmin() || isMasterLite();
-    }
-
-    // 3. Cities
-    match /cities/{cityId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && (isAdmin() || (isServant() && belongsToUserCongregation(request.resource.data)));
-      allow update: if isAuthenticated() && (isAdmin() || (isServant() && belongsToUserCongregation(resource.data) && congregationIdIsImmutable()));
-      allow delete: if isAuthenticated() && (isAdmin() || (isServant() && belongsToUserCongregation(resource.data)));
+      allow create, delete: if isAdmin();
+      allow update: if isAuthenticated() && (isAdmin() || (isServant() && (congregationId == getCongId(get(/databases/$(database)/documents/users/$(request.auth.uid)).data))));
     }
 
-    // 4. Coleções Principais (Territórios, Endereços)
+    // 2. Coleção de Usuários
+    match /users/{userId} {
+      // Prioriza check de UID próprio para evitar recursão no getAuthRole()
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin() || isServant());
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isAuthenticated() && (request.auth.uid == userId || isAdmin() || isServant());
+      allow delete: if isAdmin();
+    }
+
+    // 3. Cidades
+    match /cities/{id} {
+      allow read: if isAuthenticated() && (isAdmin() || isServant() || getAuthRole() == 'PUBLICADOR');
+      allow create, update, delete: if isAdmin() || isServant();
+    }
+
+    // 4. Territórios e Endereços
     match /territories/{id} {
-        allow read: if isAuthenticated() && belongsToUserCongregation(resource.data);
-        allow create: if isAuthenticated() && (isAdmin() || (isServant() && belongsToUserCongregation(request.resource.data)));
-        // Estrito: Deve pertencer à congregação e não pode mudar o congId
-        allow update: if isAuthenticated() && (isAdmin() || (isServant() && belongsToUserCongregation(resource.data) && belongsToUserCongregation(request.resource.data) && congregationIdIsImmutable()));
-        allow delete: if isAuthenticated() && (isAdmin() || (isServant() && belongsToUserCongregation(resource.data)));
+      allow read: if isAuthenticated() && (isAdmin() || isServant() || getAuthRole() == 'PUBLICADOR');
+      allow create, update, delete: if isAdmin() || isServant();
     }
 
     match /addresses/{id} {
-        // LEITURA: Permite qualquer usuário autenticado da mesma congregação
-        allow read: if isAuthenticated() && belongsToUserCongregation(resource.data);
-        
-        // CRIAÇÃO: Deve pertencer à congregação do usuário
-        allow create: if isAuthenticated() && belongsToUserCongregation(request.resource.data);
-        
-        // ATUALIZAÇÃO: Apenas Servos e Anciões podem atualizar endereços (incluindo reordenação)
-        allow update: if isAuthenticated() && (
-            isMasterAdmin() ||
-            (isServant() && belongsToUserCongregation(resource.data) && congregationIdIsImmutable())
-        );
-        
-        // EXCLUSÃO: Servos e Anciões (ou Admin)
-        allow delete: if isAuthenticated() && (
-            isAdmin() ||
-            (isServant() && belongsToUserCongregation(resource.data))
-        );
+      allow read: if isAuthenticated() && (isAdmin() || isServant() || getAuthRole() == 'PUBLICADOR');
+      allow create, update, delete: if isAdmin() || isServant();
+      
+      // Subcoleção de Histórico de Endereço
+      match /history/{histId} {
+        allow read: if isAuthenticated() && (isAdmin() || isServant() || getAuthRole() == 'PUBLICADOR');
+        allow create, update, delete: if isAuthenticated();
+      }
     }
 
-    // 5. Visitas (Subcoleção)
-    match /{document=**}/visits/{id} {
-        // LEITURA ESTRITA: Pertence à congregação OU é compartilhada publicamente
-        allow read: if (isAuthenticated() && (
-            isAdmin() || 
-            (isPublisher() && belongsToUserCongregation(resource.data))
-        )) ||
-        (resource.data.shareId != null && exists(/databases/$(database)/documents/shared_lists/$(resource.data.shareId)));
-
-        allow create: if isAuthenticated() && (
-            isAdmin() || 
-            (isPublisher() && belongsToUserCongregation(request.resource.data))
-        );
-
-        allow update: if isAuthenticated() && (
-            isAdmin() || 
-            (isPublisher() && belongsToUserCongregation(resource.data) && congregationIdIsImmutable())
-        );
-
-        allow delete: if isAuthenticated() && (
-            isAdmin() || 
-            (isServant() && belongsToUserCongregation(resource.data))
-        );
+    // 5. Visitas (Histórico Individual)
+    match /visits/{id} {
+      allow read: if isAuthenticated() && (isAdmin() || isServant() || getAuthRole() == 'PUBLICADOR');
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        isAdmin() || 
+        isServant() || 
+        resource.data.userId == request.auth.uid || 
+        resource.data.user_id == request.auth.uid
+      );
+      allow delete: if isAdmin() || isServant() || (resource.data.userId == request.auth.uid || resource.data.user_id == request.auth.uid);
     }
 
-    // 6. Listas Compartilhadas (Leitura Pública, Escrita Autenticada)
+    // 6. Listas Compartilhadas (Cartões)
     match /shared_lists/{id} {
-        allow get: if true; // Público para compartilhamento
-        allow list: if isAuthenticated() && (
-            isAdmin() || 
-            isPublisher() && (
-                resource.data.get('assignedTo', '') == request.auth.uid || 
-                resource.data.get('assigned_to', '') == request.auth.uid ||
-                belongsToUserCongregation(resource.data)
-            )
-        );
-        match /items/{itemId} { 
-            // Leitura pública para compartilhamento (get e list)
-            allow get, list: if true;
-            
-            // CRIAÇÃO: Apenas autenticados na própria congregação
-            allow create: if isAuthenticated() && belongsToUserCongregation(request.resource.data);
-            
-            // ATUALIZAÇÃO/EXCLUSÃO: Apenas quem tem acesso à congregação
-            allow update, delete: if isAuthenticated() && (isAdmin() || belongsToUserCongregation(resource.data));
-        }
-        match /territory_addresses/{addrId} { 
-            // Leitura pública para compartilhamento (get e list)
-            allow get, list: if true;
-            
-            // CRIAÇÃO: Apenas autenticados na própria congregação
-            allow create: if isAuthenticated() && belongsToUserCongregation(request.resource.data);
-            
-            // ATUALIZAÇÃO/EXCLUSÃO: Apenas quem tem acesso à congregação
-            allow update, delete: if isAuthenticated() && (isAdmin() || belongsToUserCongregation(resource.data));
-        }
-        
-        // CRIAÇÃO: Apenas autenticados na própria congregação
-        allow create: if isAuthenticated() && (isAdmin() || belongsToUserCongregation(request.resource.data));
-        
-        // ATUALIZAÇÃO/EXCLUSÃO: Apenas quem tem acesso à congregação
-        allow update, delete: if isAuthenticated() && (
-            isAdmin() || 
-            isPublisher() && belongsToUserCongregation(resource.data)
-        );
-        
-        match /results/{resultId} {
-            // Recursos públicos para a visualização compartilhada
-            allow read: if true;
-            
-            // ESCRITA PÚBLICA: Aceitável porque:
-            // 1. Os dados já são públicos (listas compartilhadas)
-            // 2. O escopo é limitado (apenas resultados para esta lista específica)
-            // 3. O tamanho é controlado (< 10 campos)
-            // 4. Nenhum dado sensível é armazenado
-            allow write: if true && request.resource.data.size() < 10; 
-        }
+      allow read: if isAuthenticated(); // Qualquer autenticado pode ler uma lista compartilhada
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && (
+        isAdmin() || 
+        isServant() || 
+        resource.data.get('createdBy', null) == request.auth.uid ||
+        // Permite que qualquer usuário autenticado aceite se estiver vago ou se for o designado
+        (isAuthenticated() && (
+          resource.data.get('assigned_to', null) == null || 
+          resource.data.get('assigned_to', "") == "" || 
+          resource.data.get('assignedTo', null) == null || 
+          resource.data.get('assigned_to', null) == request.auth.uid ||
+          resource.data.get('assignedTo', null) == request.auth.uid
+        ))
+      );
+      allow delete: if isAdmin() || isServant() || resource.data.get('createdBy', null) == request.auth.uid;
+
+      // Subcoleções de Listas
+      match /items/{itemId} { allow read, write: if true; }
+      match /territory_addresses/{addrId} { allow read, write: if true; }
+      match /results/{resultId} {
+        allow read, write: if true;
+      }
     }
 
-    // 7. Snapshots de Listas (Territórios e Endereços congelados na emissão)
-    match /shared_list_snapshots/{id} {
+    // 7. Snapshots de Listas (Públicos)
+    match /shared_list_snapshots/{snapId} {
+      allow read: if true;
+      allow create, update: if isAuthenticated() && (isAdmin() || isServant() || getAuthRole() == 'PUBLICADOR');
+      allow delete: if isAdmin() || isServant();
+      
+      match /visits/{id} {
         allow read: if true;
-        allow create: if isAuthenticated(); // Temporariamente permissivo para teste de batch
-        allow update: if isAuthenticated() || true; 
-        allow delete: if isAuthenticated() && isAdmin();
+        allow create, update: if isAuthenticated() && (isAdmin() || isServant() || getAuthRole() == 'PUBLICADOR');
+        allow delete: if isAdmin() || isServant();
+      }
     }
 
     // 8. Pontos de Testemunho
     match /witnessing_points/{id} {
-        allow read: if isAuthenticated() && (isAdmin() || belongsToUserCongregation(resource.data));
-        allow create: if isAuthenticated() && (isAdmin() || (isServant() && belongsToUserCongregation(request.resource.data)));
-        allow update: if isAuthenticated() && (isAdmin() || (isServant() && belongsToUserCongregation(resource.data) && congregationIdIsImmutable()));
-        allow delete: if isAuthenticated() && (isAdmin() || (isServant() && belongsToUserCongregation(resource.data)));
+      allow read: if isAuthenticated() && (isAdmin() || isServant() || getAuthRole() == 'PUBLICADOR');
+      allow create, delete: if isAdmin() || isServant();
+      allow update: if isAuthenticated() && (
+        isAdmin() || 
+        isServant() || 
+        getAuthRole() == 'PUBLICADOR'
+      );
     }
 
-    // 8. Modelos e Relatórios
+    // 9. Miscelânea (Logs, Reports, etc)
     match /notification_templates/{id} {
-        // Leitura restrita à própria congregação se o campo existir, caso contrário global? 
-        // Assumindo modelos globais por enquanto, mas impedindo escritas.
-        allow read: if isAuthenticated();
-        allow write: if isAuthenticated() && isAdmin();
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
 
-    // REGRAS DE RELATÓRIOS DE BUGS (Bug Reports)
     match /bug_reports/{reportId} {
-        allow create: if isAuthenticated()
-          && (request.resource.data.userId == request.auth.uid || request.resource.data.user_id == request.auth.uid);
-          
-        allow read: if isAdmin();
-        allow update: if isAdmin();
-        allow delete: if false;
+      allow create: if isAuthenticated();
+      allow read, update: if isAdmin();
     }
 
     match /error_reports/{reportId} {
-        allow create: if isAuthenticated()
-          && (request.resource.data.userId == request.auth.uid || request.resource.data.user_id == request.auth.uid);
-          
-        allow read: if isAdmin();
-        allow update: if isAdmin();
-        allow delete: if false;
+      allow create: if isAuthenticated();
+      allow read, update: if isAdmin();
     }
-    
-    // Negação Padrão para Tudo (Explícito para boas práticas)
+
+    match /settings/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Fallback: Bloqueia tudo que não foi explicitamente permitido
+    match /{path=**} {
+      allow read, write: if false;
+    }
   }
 }

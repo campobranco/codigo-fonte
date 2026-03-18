@@ -131,7 +131,7 @@ export default function RootLayout({
             <FloatingReportButton />
             <CookieBanner />
             <Toaster richColors position="top-center" />
-            <main className="app-shell flex-1">
+            <main className="app-shell flex-1 relative">
               {children}
             </main>
             <footer className="py-4 text-center print:hidden">

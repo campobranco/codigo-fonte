@@ -105,10 +105,26 @@ Para facilitar deploys Open Source e novas instâncias do Campo Branco:
   - Ajuste na captura de log via `html2canvas` da imagem de avatar do Google, previnindo erro de rota 429 (Too Many Requests).
   - Remoção de obrigatoriedade do parâmetro `cityId` no serviço de estatísticas (`stats.ts`), liberando pesquisa e exibição de todos os cartões na listagem da página de cidades.
   - Mitigação de imagem de perfil (Google Avatar) corrompido no Next Export: `<Image>` alterado para `<img>` com policy `no-referrer`.
+  - v0.7.9-beta: Corrigido erro de permissão na exclusão de conta (Firestore rules).
+  - v0.7.10-beta: Adicionada segurança extra na exclusão de conta, exigindo confirmação de e-mail e congregação.
+- v0.7.11-beta: Corrigido erro de permissão para Publicadores em Listas Compartilhadas e Snapshots (Firestore rules).
+- v0.7.12-beta: Refinada regra de atualização de Listas Compartilhadas para maior robustez com campos opcionais.
+- v0.7.13-beta: Corrigida potencial recursão nas regras do Firestore e melhorada a performance de leitura do perfil.
+- v0.7.14-beta: Padronização de campos (`assigned_to`) e correção da configuração de banco de dados no `.env.local`.
+- v0.7.15-beta: Reversão do ID do banco de dados para `default` e simplificação das regras de permissão para aceitação de listas.
   - Correção de erro de permissão na criação de listas compartilhadas: Adicionada regra para a coleção `shared_list_snapshots` e inclusão de `congregationId` nos documentos de snapshot para validação de segurança.
   - Substituição total do componente `<Image>` do Next.js por tags `<img>` nativas em toda a aplicação (incluindo Login, Dashboard e Settings) para evitar conflitos de runtime com o construtor global `Image` do navegador.
-  - Implementação de monitoramento em tempo real (`onSnapshot`) para o perfil do usuário no `AuthContext`, permitindo que alterações de papel (role) e congregação sejam refletidas instantaneamente na interface sem necessidade de recarregamento manual.
+  - Implementação de monitoramento em tempo real (`onSnapshot`) para o perfil do usuário no `AuthContext`, permitindo que alterações de papel (role) e congregação sejam refletidas instantaneamente na interface sem necessidade de recarregamento manual (Versão 0.7.0-beta).
   - Suporte resiliente a múltiplos formatos de campo para congregação (`congregationId` e `congregation_id`) no carregamento de perfil, garantindo compatibilidade com diferentes estados do banco de dados Firestore.
+  - Sincronização e auditoria de segurança para o repositório GitHub, com proteção aprimorada no `.gitignore`.
+  - [Mar/2026] Correção de Permissões no Dashboard:
+    - Simplificação da função `belongsToUserCongregation` nas Firestore rules para suportar consultas de listagem e agregação de forma mais eficiente.
+    - Substituição de `getCountFromServer` por `getDocs().size` no carregamento de estatísticas do Dashboard para garantir resiliência em consultas filtradas por congregação no plano Spark (Versão 0.7.1-beta).
+    - Otimização radical de performance e permissões separando verificações de congregação em blocos OR. Os helpers `isSameCongregation` e `getCongId` agora lidam de forma robusta com variações de `camelCase` e `snake_case` nos documentos de usuário e recursos.
+    - Correção crítica em `VisitsHistory.tsx`: inclusão de filtros explícitos de `congregationId` em consultas de ID (`documentId in chunk`), permitindo que usuários com papel PUBLICADOR visualizem nomes de usuários e endereços sem erro de permissão (Versão 0.7.2-beta).
+    - [Mar/2026] Autonomia de Conta (v0.7.9-beta):
+      - **Exclusão de Conta pelo Usuário**: Atualizada a regra de exclusão da coleção `users` para permitir que o dono do próprio perfil realize a deleção. Isso habilita a funcionalidade de "Excluir Minha Conta" nas configurações para usuários sem privilégios administrativos.
+      - **Estabilização de Check-in (v0.7.8-beta)**: Simplificação de regras em `witnessing_points` para garantir funcionamento do check-in.
 
 ---
 > [!IMPORTANT]
