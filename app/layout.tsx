@@ -11,8 +11,6 @@ import CookieBanner from './components/CookieBanner';
 import PreviewIndicator from './components/PreviewIndicator';
 import { APP_VERSION } from '@/lib/version';
 import { Toaster } from 'sonner';
-import { Analytics } from '@vercel/analytics/react';
-import { SpeedInsights } from '@vercel/speed-insights/next';
 
 
 const inter = Inter({ subsets: ['latin'] })
@@ -67,8 +65,53 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{
           __html: `
+          // Redirecionamento de legado do GitHub Pages
           if (typeof window !== 'undefined' && window.location.hostname === 'campobranco.github.io') {
             window.location.replace('https://campo-branco.web.app' + window.location.pathname + window.location.search + window.location.hash);
+          }
+
+          // Injetando versão do app para o script
+          const CURRENT_VERSION = "${APP_VERSION}";
+          
+          // Cache Buster Agressivo (v2) - Força atualização se a versão mudar
+          try {
+            const lastVersion = localStorage.getItem('app_version');
+            
+            if (lastVersion !== CURRENT_VERSION) {
+              console.log('Versão alterada detectada (' + lastVersion + ' -> ' + CURRENT_VERSION + '). Limpando caches...');
+              
+              // 1. Limpa todos os caches nomeados
+              if ('caches' in window) {
+                caches.keys().then(names => {
+                  Promise.all(names.map(name => caches.delete(name))).then(() => {
+                    console.log('Todos os caches de armazenamento foram removidos.');
+                  });
+                });
+              }
+
+              // 2. Desregistra todos os Service Workers e registra o Kill Switch
+              if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistrations().then(registrations => {
+                  for (let registration of registrations) {
+                    registration.unregister();
+                  }
+                  console.log('Service Workers desregistrados. Registrando Kill Switch...');
+                  return navigator.serviceWorker.register('/sw-kill.js');
+                }).catch(err => console.log('Erro ao limpar SWs:', err));
+              }
+
+              // 3. Salva a nova versão e força um reload total ignorando o cache (v3)
+              localStorage.setItem('app_version', CURRENT_VERSION);
+              
+              // Pequeno delay para garantir que as limpezas acima comecem
+              setTimeout(() => {
+                const url = new URL(window.location.href);
+                url.searchParams.set('cv', Date.now().toString());
+                window.location.href = url.toString();
+              }, 800);
+            }
+          } catch (e) {
+            console.error('Erro no Cache Buster:', e);
           }
         ` }} />
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossOrigin="" />
@@ -82,16 +125,13 @@ export default function RootLayout({
       <body className={`${inter.className} min-h-screen flex flex-col`} suppressHydrationWarning={true}>
         <AuthProvider>
           <ThemeProvider>
-            <Analytics />
-            <SpeedInsights />
             <PreviewIndicator />
             {/* <FCMManager /> Removed */}
             <SimulationBanner />
             <FloatingReportButton />
             <CookieBanner />
             <Toaster richColors position="top-center" />
-            <Analytics />
-            <main className="app-shell flex-1">
+            <main className="app-shell flex-1 relative">
               {children}
             </main>
             <footer className="py-4 text-center print:hidden">

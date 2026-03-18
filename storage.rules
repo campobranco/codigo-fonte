@@ -5,6 +5,18 @@ rules_version = '2';
 //    /databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin;
 service firebase.storage {
   match /b/{bucket}/o {
+    // Perfis de usuário: cada usuário pode ler e escrever apenas no seu próprio diretório
+    match /profiles/{userId}/{allPaths=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Arquivos públicos (ex: ícones do app, logos das congregações)
+    match /public/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null && (request.auth.token.role == 'ADMIN' || request.auth.token.email == 'campobrancojw@gmail.com');
+    }
+
+    // Negação padrão para o restante
     match /{allPaths=**} {
       allow read, write: if false;
     }

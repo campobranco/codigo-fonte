@@ -2,7 +2,7 @@
 // Force rebuild
 
 import { useEffect, useState, useCallback } from "react";
-import Image from "next/image";
+
 import { useAuth } from "@/app/context/AuthContext";
 import {
     doc,
@@ -11,9 +11,9 @@ import {
     collection,
     query,
     where,
+    or,
     orderBy,
     limit,
-    getCountFromServer,
     serverTimestamp,
     deleteDoc,
     updateDoc
@@ -54,6 +54,7 @@ import Link from "next/link";
 import BottomNav from "@/app/components/BottomNav";
 import ActionCenter, { IdleTerritory } from "@/app/components/Dashboard/ActionCenter";
 import VisitsHistory from "@/app/components/Dashboard/VisitsHistory";
+import ConfirmationModal from "@/app/components/ConfirmationModal";
 
 // --- UTILS ---
 
@@ -145,7 +146,10 @@ export default function DashboardPage() {
 
                 const q = query(
                     collection(db, 'shared_lists'),
-                    where('assigned_to', '==', userId)
+                    or(
+                        where('assigned_to', '==', userId),
+                        where('assignedTo', '==', userId)
+                    )
                 );
 
                 const querySnapshot = await getDocs(q);
@@ -407,33 +411,45 @@ export default function DashboardPage() {
                 const [
                     citiesSnap,
                     territoriesSnap,
-                    addressesCountSnap,
-                    pointsCountSnap,
-                    visitsCountSnap,
+                    addressesSnap,
+                    pointsSnap,
+                    visitsSnap,
                     historySnap
                 ] = await Promise.all([
                     getDocs(qCities),
                     getDocs(qTerritories),
-                    getCountFromServer(qAddresses),
-                    getCountFromServer(qPoints),
-                    getCountFromServer(qVisits),
+                    getDocs(qAddresses),
+                    getDocs(qPoints),
+                    getDocs(qVisits),
                     getDocs(qHistory)
                 ]);
 
                 const citiesData = citiesSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })) as any[];
                 const territoriesData = territoriesSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })) as any[];
-                const addressesCount = addressesCountSnap.data().count;
-                const pointsCount = pointsCountSnap.data().count;
-                const visitsCount = visitsCountSnap.data().count;
+                const addressesCount = addressesSnap.size;
+                const pointsCount = pointsSnap.size;
+                const visitsCount = visitsSnap.size;
                 const historyData = historySnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })) as any[];
 
-                // 1. Validate Cities
+                // 1. Mapeia cidades válidas
                 const validCityIds = new Set(citiesData?.map(c => c.id) || []);
                 const cityMap: Record<string, string> = {};
                 citiesData?.forEach(c => cityMap[c.id] = c.name);
 
-                // 2. Validate Territories
-                const validTerritories = territoriesData?.filter(t => t.city_id && validCityIds.has(t.city_id)) || [];
+                // 2. Valida territórios — aceita tanto cityId (camelCase) quanto city_id (snake_case)
+                // Se não houver cidades no Firestore com congregationId correspondente,
+                // usa todos os territórios da congregação (fallback para evitar contagem zero incorreta)
+                let validTerritories = territoriesData?.filter(t => {
+                    const tCityId = t.cityId || t.city_id; // suporte para ambos os formatos de campo
+                    return tCityId && validCityIds.has(tCityId);
+                }) || [];
+
+                // Fallback: se cidades não retornaram mas territórios sim, conta todos os territórios
+                if (validTerritories.length === 0 && territoriesData.length > 0) {
+                    console.warn('[Dashboard] Nenhuma cidade válida encontrada para validação de territórios. Usando todos os territórios da congregação como fallback.');
+                    validTerritories = territoriesData;
+                }
+
                 const validTerritoryIds = new Set(validTerritories.map(t => t.id));
 
                 // 3. Process History for Coverage
@@ -495,7 +511,7 @@ export default function DashboardPage() {
                             name: data.name || 'Sem Nome',
                             description: data.notes || '',
                             city: cityName,
-                            city_id: data.city_id,
+                            city_id: data.cityId || data.city_id, // suporte a camelCase e snake_case
                             lastVisit: null,
                             variant: 'danger'
                         });
@@ -505,7 +521,7 @@ export default function DashboardPage() {
                             name: data.name || 'Sem Nome',
                             description: data.notes || '',
                             city: cityName,
-                            city_id: data.city_id,
+                            city_id: data.cityId || data.city_id, // suporte a camelCase e snake_case
                             lastVisit: lastAnyDate,
                             variant: 'warning'
                         });
@@ -812,7 +828,7 @@ export default function DashboardPage() {
             <header className="bg-surface sticky top-0 z-30 px-6 py-4 border-b border-surface-border flex justify-between items-center">
                 <div className="flex items-center gap-3">
                     <div className="bg-transparent p-0 rounded-lg">
-                        <Image src="/app-icon.svg" alt="Logo" width={40} height={40} className="object-contain drop-shadow-md" priority />
+                        <img src="/app-icon.svg" alt="Logo" width="40" height="40" className="object-contain drop-shadow-md" />
                     </div>
                     <div>
                         <span className="font-bold text-lg text-main tracking-tight block leading-tight">Campo Branco</span>
@@ -977,6 +993,17 @@ export default function DashboardPage() {
                 </div>
             )}
             <BottomNav />
+            {/* Confirmation Modal */}
+            {confirmModal && (
+                <ConfirmationModal
+                    isOpen={!!confirmModal}
+                    onClose={() => setConfirmModal(null)}
+                    onConfirm={confirmModal.onConfirm}
+                    title={confirmModal.title}
+                    description={confirmModal.message}
+                    variant={confirmModal.variant as any}
+                />
+            )}
         </div>
     );
 }

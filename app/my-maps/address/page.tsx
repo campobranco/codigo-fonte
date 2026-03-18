@@ -1,21 +1,29 @@
 "use client";
 
-import { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { toast } from 'sonner';
-import RoleBasedSwitcher from '@/app/components/RoleBasedSwitcher';
 import {
-    Search, Plus, MapPin, Navigation, Pencil, Trash2,
+    Search, MapPin, Navigation, Pencil, Trash2,
     Loader2, ArrowLeft, Home, GripVertical, MoreVertical,
     X, CheckCircle, MousePointer2, History as HistoryIcon,
     FileText, User, Ear, Baby, GraduationCap, Brain,
-    Truck, Calendar, Hand, Info, Link as LinkIcon,
-    ChevronDown, ChevronUp, Map as MapIcon
+    Truck, Calendar, Hand, Info, ChevronDown, ChevronUp, Map as MapIcon, Plus, Users
 } from 'lucide-react';
-import VisitHistoryModal from '@/app/components/VisitHistoryModal';
-import BottomNav from '@/app/components/BottomNav';
+import dynamic from 'next/dynamic';
+
+const VisitHistoryModal = dynamic(() => import('@/app/components/VisitHistoryModal'), {
+    loading: () => <div className="p-4 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-primary-500" /></div>
+});
+const BottomNav = dynamic(() => import('@/app/components/BottomNav'), { ssr: false });
 import ConfirmationModal from '@/app/components/ConfirmationModal';
-import MapView, { MapItem } from '@/app/components/MapView';
-import MapAppSelectModal from '@/app/components/MapAppSelectModal';
+import { MapSkeleton } from '@/app/components/Skeleton';
+
+const MapView = dynamic(() => import('@/app/components/MapView'), {
+    loading: () => <MapSkeleton />,
+    ssr: false
+});
+const MapAppSelectModal = dynamic(() => import('@/app/components/MapAppSelectModal'));
+import type { MapItem } from '@/app/components/MapView';
 import {
     doc,
     getDoc,
@@ -33,12 +41,16 @@ import {
     writeBatch
 } from "firebase/firestore";
 import { db } from '@/lib/firebase';
-import { geocodeAddress } from '@/app/actions/geocoding';
+import { geocodeAddress } from '@/lib/services/geocoding';
+import { getAddresses, saveAddress, deleteAddress } from '@/lib/services/addresses';
+import { deleteVisit } from '@/lib/services/visits';
+import { getMapsContext } from '@/lib/services/territories';
 import Link from 'next/link';
 import { useAuth } from '@/app/context/AuthContext';
 import { getServiceYear, getServiceYearRange } from '@/lib/serviceYearUtils';
 import { useRouter, useSearchParams } from 'next/navigation';
 import CSVActionButtons from '@/app/components/CSVActionButtons';
+import AddressActionsMenu from '@/app/components/AddressActionsMenu';
 
 interface Address {
     id: string;
@@ -73,9 +85,12 @@ interface Address {
     is_neurodivergent?: boolean;
     visit_status?: 'contacted' | 'not_contacted' | 'moved' | 'do_not_visit' | 'none';
     last_visited_at?: string;
-    sort_order?: number;
+    sortOrder?: number;
     inactivated_at?: string;
     inactivatedAt?: string;
+    residentsCount?: number;
+    residents_count?: number;
+    people_count?: number;
 }
 
 function AddressListContent() {
@@ -84,7 +99,7 @@ function AddressListContent() {
     const congregationId = searchParams.get('congregationId') || '';
     const cityId = searchParams.get('cityId') || '';
     const territoryId = searchParams.get('territoryId') || '';
-    const currentView = searchParams.get('view') || 'grid';
+        const editAddressId = searchParams.get('edit');
 
     const { user, isAdmin, isAdminRoleGlobal, isElder, isServant, loading: authLoading, congregationType: authCongregationType, termType } = useAuth();
     const [localCongregationType, setLocalCongregationType] = useState<'TRADITIONAL' | 'SIGN_LANGUAGE' | 'FOREIGN_LANGUAGE' | null>(null);
@@ -241,9 +256,7 @@ function AddressListContent() {
         const fetchData = async () => {
             setLoading(true);
             try {
-                // Fetch context over bypass RLS API to avoid 404 block for cities and territories selection
-                const response = await fetch(`/api/maps/context?congregationId=${congregationId}&cityId=${cityId}&territoryId=${territoryId}`);
-                const resData = await response.json();
+                const resData = await getMapsContext(congregationId, cityId, territoryId);
 
                 if (!resData.success) {
                     throw new Error(resData.error || 'Erro ao buscar contexto superior');
@@ -256,27 +269,27 @@ function AddressListContent() {
                 // Concatenando o numero com descricao para exibir no cabeçalho
                 let territoryDisplayName = 'Não encontrada';
                 if (terrResData) {
-                    territoryDisplayName = terrResData.name;
-                    if (terrResData.notes) {
-                        territoryDisplayName += ` - ${terrResData.notes}`;
+                    territoryDisplayName = (terrResData as any).name;
+                    if ((terrResData as any).notes) {
+                        territoryDisplayName += ` - ${(terrResData as any).notes}`;
                     }
                 }
 
                 setContextNames({
-                    congregation: congResData?.name || 'Não encontrada',
-                    city: cityResData?.name || 'Não encontrada',
+                    congregation: (congResData as any)?.name || 'Não encontrada',
+                    city: (cityResData as any)?.name || 'Não encontrada',
                     territory: territoryDisplayName
                 });
 
                 if (congResData) {
-                    setLocalTermType(congResData.term_type as any || 'city');
-                    const cat = (congResData.category || '').toLowerCase();
+                    setLocalTermType((congResData as any).term_type as any || 'city');
+                    const cat = ((congResData as any).category || '').toLowerCase();
                     if (cat.includes('sinais') || cat.includes('sign')) setLocalCongregationType('SIGN_LANGUAGE');
                     else if (cat.includes('estrangeir') || cat.includes('foreign')) setLocalCongregationType('FOREIGN_LANGUAGE');
                     else setLocalCongregationType('TRADITIONAL');
                 }
                 if (cityResData) {
-                    setParentCity(cityResData.parent_city || null);
+                    setParentCity((cityResData as any).parent_city || null);
                 }
 
             } catch (error) {
@@ -295,35 +308,29 @@ function AddressListContent() {
         if (!congregationId || !territoryId) return;
 
         try {
-            const response = await fetch(`/api/addresses/list?congregationId=${congregationId}&cityId=${cityId}&territoryId=${territoryId}`, {
-                cache: 'no-store'
-            });
-            const resData = await response.json();
+            const resData = await getAddresses(congregationId, cityId, territoryId);
+            console.log("[Debug] Endereços recebidos:", resData);
 
-            if (!response.ok) {
+            if (!resData.success) {
                 throw new Error(resData.error || 'Erro ao buscar endereços');
             }
 
-            const data = resData.addresses.map((addr: any) => ({
+            const data = (resData.addresses || []).map((addr: any) => ({
                 ...addr,
-                people_count: addr.phone ? parseInt(addr.phone) : 1
+                residentsCount: addr.residentsCount || addr.residents_count || addr.people_count || 1
             }));
 
-            const sorted = (data || []).sort((a: any, b: any) => {
-                const orderA = a.sort_order ?? 999999;
-                const orderB = b.sort_order ?? 999999;
+            const sorted = data.sort((a: any, b: any) => {
+                const orderA = a.sortOrder ?? 999999;
+                const orderB = b.sortOrder ?? 999999;
                 if (orderA !== orderB) return orderA - orderB;
                 return a.street.localeCompare(b.street);
             });
 
-            setAddresses(sorted);
+            setAddresses(sorted as Address[]);
         } catch (error: any) {
             console.error("Error fetching addresses:", error);
-            if (error.message?.includes('index')) {
-                toast.error("O banco de dados ainda está preparando os índices. Aguarde um momento...");
-            } else {
-                toast.error("Erro ao carregar endereços.");
-            }
+            toast.error(error.message || "Erro ao carregar endereços.");
         } finally {
             setLoading(false);
         }
@@ -332,12 +339,25 @@ function AddressListContent() {
     useEffect(() => {
         fetchAddresses();
 
-        if (territoryId && db) {
+        if (territoryId && congregationId && db) {
             const addressesRef = collection(db, 'addresses');
-            const q = query(addressesRef, where('territoryId', '==', territoryId));
+            const q = query(
+                addressesRef,
+                where('congregationId', '==', congregationId),
+                where('territoryId', '==', territoryId)
+            );
 
-            const unsubscribe = onSnapshot(q, () => {
-                fetchAddresses();
+            const unsubscribe = onSnapshot(q, {
+                next: () => {
+                    fetchAddresses();
+                },
+                error: (error) => {
+                    // Usamos warn para não disparar o bug report, já que temos fallback via API
+                    console.warn("[SnapShot] Listener de endereços limitado:", error.message);
+                    if (error.code === 'permission-denied') {
+                        // Silencioso: fallback já está em ação
+                    }
+                }
             });
 
             return () => unsubscribe();
@@ -397,6 +417,20 @@ function AddressListContent() {
         }
     }, [isCreateModalOpen, editingId, congregationId, cityId, territoryId]);
 
+    // Handle edit parameter from URL
+    useEffect(() => {
+        if (editAddressId && addresses.length > 0) {
+            const addressToEdit = addresses.find(addr => addr.id === editAddressId);
+            if (addressToEdit) {
+                handleEditAddress(addressToEdit);
+                // Remove o parâmetro edit da URL para não abrir novamente em refresh
+                const url = new URL(window.location.href);
+                url.searchParams.delete('edit');
+                router.replace(url.pathname + url.search, { scroll: false });
+            }
+        }
+    }, [editAddressId, addresses]);
+
 
 
     // Actions
@@ -409,7 +443,6 @@ function AddressListContent() {
 
         try {
             const addressData = {
-                id: editingId || undefined,
                 street: combinedAddress.trim(),
                 territoryId: selectedTerritoryId,
                 congregationId: selectedCongregationId,
@@ -421,7 +454,7 @@ function AddressListContent() {
                 wazeLink: wazeLink,
                 residentName: residentName,
                 residentsCount: residentsCount ? parseInt(residentsCount) : 1,
-                gender: gender || null,
+                gender: (gender as any) || null,
                 isDeaf: isDeaf,
                 isMinor: isMinor,
                 isStudent: isStudent,
@@ -429,32 +462,18 @@ function AddressListContent() {
                 observations
             };
 
-            console.log("[Debug] Salvando endereço:", addressData);
-            console.log("[Debug] IDs individuais:", {
-                territoryId: selectedTerritoryId,
-                congregationId: selectedCongregationId,
-                cityId: selectedCityId
-            });
+            const resData = await saveAddress(editingId || null, addressData);
 
-            const response = await fetch('/api/addresses/save', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(addressData)
-            });
-
-            const resData = await response.json();
-            if (!response.ok) {
-                throw new Error(resData.error || 'Erro ao salvar via API');
+            if (!resData.success) {
+                throw new Error(resData.error || 'Erro ao salvar endereço');
             }
 
             toast.success(editingId ? "Endereço atualizado com sucesso!" : "Endereço cadastrado com sucesso!");
-
             fetchAddresses();
-
             resetForm();
-        } catch (error) {
+        } catch (error: any) {
             console.error("Error saving address:", error);
-            toast.error("Erro ao salvar endereço.");
+            toast.error(error.message || "Erro ao salvar endereço.");
         }
     };
 
@@ -494,8 +513,9 @@ function AddressListContent() {
         setIsDeaf(addr.isDeaf || false);
         setIsMinor(addr.isMinor || false);
         setIsStudent(addr.isStudent || false);
-        setIsNeurodivergent(addr.isNeurodivergent || false);
+        setIsNeurodivergent(addr.isNeurodivergent || addr.is_neurodivergent || false);
         setObservations(addr.observations || '');
+        setResidentsCount(addr.residentsCount?.toString() || addr.residents_count?.toString() || addr.people_count?.toString() || '1');
         setIsCreateModalOpen(true);
     };
 
@@ -508,16 +528,17 @@ function AddressListContent() {
         if (!addressToDelete) return;
         setIsDeleting(true);
         try {
-            const addrRef = doc(db, 'addresses', addressToDelete);
-            await deleteDoc(addrRef);
+            const resData = await deleteAddress(addressToDelete);
+            if (!resData.success) throw new Error(resData.error);
+            
             toast.success("Endereço excluído com sucesso!");
             fetchAddresses();
             setIsDeleteDialogOpen(false);
             setAddressToDelete(null);
             setOpenMenuId(null);
-        } catch (error) {
+        } catch (error: any) {
             console.error("Error deleting address:", error);
-            toast.error("Erro ao excluir endereço.");
+            toast.error(error.message || "Erro ao excluir endereço.");
         } finally {
             setIsDeleting(false);
         }
@@ -566,8 +587,10 @@ function AddressListContent() {
                 batch.update(addrRef, { sortOrder: index });
             });
             await batch.commit();
+            toast.success("Ordem dos endereços atualizada!");
         } catch (error) {
             console.error("Error updating sort order:", error);
+            toast.error("Erro ao salvar nova ordem dos endereços.");
         }
     };
 
@@ -619,24 +642,19 @@ function AddressListContent() {
     const handleApproveDNV = async (addr: Address) => {
         try {
             const addressData = {
-                ...addr,
-                is_active: false,
-                inactivated_at: new Date().toISOString()
+                id: addr.id,
+                isActive: false,
+                inactivatedAt: new Date().toISOString()
             };
 
-            const response = await fetch('/api/addresses/save', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(addressData)
-            });
-
-            if (!response.ok) throw new Error("Erro ao desativar endereço");
+            const resData = await saveAddress(addr.id, addressData as any);
+            if (!resData.success) throw new Error(resData.error);
 
             toast.success("Endereço desativado com sucesso!");
             fetchAddresses();
-        } catch (error) {
+        } catch (error: any) {
             console.error(error);
-            toast.error("Erro ao aprovar solicitação.");
+            toast.error(error.message || "Erro ao aprovar solicitação.");
         }
     };
 
@@ -655,19 +673,14 @@ function AddressListContent() {
 
             if (!latestVisit) throw new Error("Não foi possível encontrar a visita relacionada.");
 
-            const response = await fetch('/api/visits/delete', {
-                method: 'DELETE',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ visitId: latestVisit.id })
-            });
-
-            if (!response.ok) throw new Error("Erro ao remover marcação");
+            const resData = await deleteVisit(latestVisit.id);
+            if (!resData.success) throw new Error(resData.error);
 
             toast.success("Marcação removida com sucesso!");
             fetchAddresses();
-        } catch (error) {
+        } catch (error: any) {
             console.error(error);
-            toast.error("Erro ao remover marcação.");
+            toast.error(error.message || "Erro ao remover marcação.");
         }
     };
 
@@ -675,41 +688,19 @@ function AddressListContent() {
         try {
             const currentActive = addr.isActive ?? addr.is_active ?? true;
 
-            // Cria um objeto limpo para salvar, evitando dados desnecessários ou conflitantes
             const addressData = {
-                id: addr.id,
-                street: addr.street,
-                territoryId: addr.territoryId || addr.territory_id,
-                congregationId: addr.congregationId || addr.congregation_id,
-                cityId: addr.cityId || addr.city_id,
-                lat: addr.lat,
-                lng: addr.lng,
                 isActive: !currentActive,
-                inactivatedAt: !currentActive ? new Date().toISOString() : null,
-                googleMapsLink: addr.googleMapsLink || addr.google_maps_link,
-                wazeLink: addr.wazeLink || addr.waze_link,
-                residentName: addr.residentName || addr.resident_name,
-                gender: addr.gender,
-                isDeaf: addr.isDeaf || addr.is_deaf,
-                isMinor: addr.isMinor || addr.is_minor,
-                isStudent: addr.isStudent || addr.is_student,
-                isNeurodivergent: addr.isNeurodivergent || addr.is_neurodivergent,
-                observations: addr.observations
+                inactivatedAt: !currentActive ? new Date().toISOString() : null
             };
 
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/api/addresses/save`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(addressData)
-            });
+            const resData = await saveAddress(addr.id, addressData as any);
+            if (!resData.success) throw new Error(resData.error);
 
-            if (!response.ok) throw new Error("Erro ao atualizar status");
-
-            toast.success(`Endereço ${!addr.is_active ? 'inativado' : 'reativado'} com sucesso!`);
+            toast.success(`Endereço ${!currentActive ? 'inativado' : 'reativado'} com sucesso!`);
             fetchAddresses();
-        } catch (error) {
+        } catch (error: any) {
             console.error(error);
-            toast.error("Erro ao atualizar status.");
+            toast.error(error.message || "Erro ao atualizar status.");
         }
     };
 
@@ -824,6 +815,13 @@ function AddressListContent() {
 
                                 {!isTraditional && (
                                     <>
+                                        {/* Resident Count Badge */}
+                                        {(addr.residentsCount || addr.residents_count || addr.people_count) && (
+                                            <span className="flex items-center gap-1 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded-md font-bold text-[10px] uppercase border border-indigo-100 dark:border-indigo-900/30">
+                                                <Users className="w-3 h-3 text-indigo-500" /> {addr.residentsCount || addr.residents_count || addr.people_count}
+                                            </span>
+                                        )}
+
                                         {addr.gender && (
                                             <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md font-bold text-[10px] uppercase ${addr.gender === 'HOMEM' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' :
                                                 addr.gender === 'MULHER' ? 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400' :
@@ -939,16 +937,18 @@ function AddressListContent() {
                         )}
 
                         {openMenuId === addr.id && (
-                            <div className="absolute right-0 top-10 bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-surface-border dark:border-slate-700 p-1 z-20 min-w-[160px] animate-in fade-in zoom-in-95 duration-200">
+                            <div className="absolute right-0 top-10 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-surface-border dark:border-slate-800 p-1.5 z-20 min-w-[180px] animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200 overflow-hidden">
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         handleOpenMap(addr);
                                         setOpenMenuId(null);
                                     }}
-                                    className="flex items-center gap-2 px-3 py-2 text-sm font-bold text-gray-600 dark:text-gray-300 hover:bg-primary-50 dark:hover:bg-primary-900/30 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg transition-colors w-full text-left"
+                                    className="flex items-center gap-3 px-3 py-2 text-sm font-bold text-gray-700 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:text-blue-600 dark:hover:text-blue-400 rounded-xl transition-all w-full text-left group"
                                 >
-                                    <Navigation className="w-4 h-4" />
+                                    <div className="p-1 px-1.5 bg-blue-100 dark:bg-blue-900/40 rounded-lg group-hover:scale-110 transition-transform">
+                                        <Navigation className="w-3.5 h-3.5" />
+                                    </div>
                                     Abrir no Mapa
                                 </button>
 
@@ -957,9 +957,11 @@ function AddressListContent() {
                                         setHistoryAddressId(addr.id);
                                         setOpenMenuId(null);
                                     }}
-                                    className="flex items-center gap-2 px-3 py-2 text-sm font-bold text-gray-600 dark:text-gray-300 hover:bg-purple-50 dark:hover:bg-purple-900/30 hover:text-purple-600 dark:hover:text-purple-400 rounded-lg transition-colors w-full text-left"
+                                    className="flex items-center gap-3 px-3 py-2 text-sm font-bold text-gray-700 dark:text-gray-300 hover:bg-purple-50 dark:hover:bg-purple-900/30 hover:text-purple-600 dark:hover:text-purple-400 rounded-xl transition-all w-full text-left group"
                                 >
-                                    <HistoryIcon className="w-4 h-4" />
+                                    <div className="p-1 px-1.5 bg-purple-100 dark:bg-purple-900/40 rounded-lg group-hover:scale-110 transition-transform">
+                                        <HistoryIcon className="w-3.5 h-3.5" />
+                                    </div>
                                     Abrir Histórico
                                 </button>
 
@@ -969,10 +971,12 @@ function AddressListContent() {
                                             handleEditAddress(addr);
                                             setOpenMenuId(null);
                                         }}
-                                        className="flex items-center gap-2 px-3 py-2 text-sm font-bold text-gray-600 dark:text-gray-300 hover:bg-primary-50 dark:hover:bg-primary-900/30 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg transition-colors w-full text-left"
+                                        className="flex items-center gap-3 px-3 py-2 text-sm font-bold text-gray-700 dark:text-gray-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 hover:text-amber-600 dark:hover:text-amber-400 rounded-xl transition-all w-full text-left group"
                                     >
-                                        <Pencil className="w-4 h-4" />
-                                        Editar
+                                        <div className="p-1 px-1.5 bg-amber-100 dark:bg-amber-900/40 rounded-lg group-hover:scale-110 transition-transform">
+                                            <Pencil className="w-3.5 h-3.5" />
+                                        </div>
+                                        Editar Dados
                                     </button>
                                 )}
 
@@ -996,24 +1000,39 @@ function AddressListContent() {
                                             });
                                             setOpenMenuId(null);
                                         }}
-                                        className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded-lg transition-colors w-full text-left ${addr.is_active === false ? 'text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30' : 'text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-900/30'}`}
+                                        className={`flex items-center gap-3 px-3 py-2 text-sm font-bold rounded-xl transition-all w-full text-left group ${
+                                            addr.is_active === false 
+                                                ? 'text-green-600 hover:bg-green-50 dark:hover:bg-green-900/30' 
+                                                : 'text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-900/30'
+                                        }`}
                                     >
-                                        {addr.is_active === false ? <Plus className="w-4 h-4" /> : <X className="w-4 h-4" />}
-                                        {addr.is_active === false ? 'Reativar Endereço' : 'Inativar Endereço'}
+                                        <div className={`p-1 px-1.5 rounded-lg group-hover:scale-110 transition-transform ${
+                                            addr.is_active === false 
+                                                ? 'bg-green-100 dark:bg-green-900/40' 
+                                                : 'bg-orange-100 dark:bg-orange-900/40'
+                                        }`}>
+                                            {addr.is_active === false ? <CheckCircle className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />}
+                                        </div>
+                                        {addr.is_active === false ? 'Ativar Cartão' : 'Desativar Cartão'}
                                     </button>
                                 )}
 
                                 {(isElder || isServant) && (
-                                    <button
-                                        onClick={() => {
-                                            handleDeleteAddress(addr.id);
-                                            setOpenMenuId(null);
-                                        }}
-                                        className="flex items-center gap-2 px-3 py-2 text-sm font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors w-full text-left"
-                                    >
-                                        <Trash2 className="w-4 h-4" />
-                                        Excluir
-                                    </button>
+                                    <>
+                                        <div className="h-px bg-gray-100 dark:bg-gray-800/50 mx-2 my-1" />
+                                        <button
+                                            onClick={() => {
+                                                handleDeleteAddress(addr.id);
+                                                setOpenMenuId(null);
+                                            }}
+                                            className="flex items-center gap-3 px-3 py-2 text-sm font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-xl transition-all w-full text-left group"
+                                        >
+                                            <div className="p-1 px-1.5 bg-red-100 dark:bg-red-900/40 rounded-lg group-hover:scale-110 transition-transform text-red-600">
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                            </div>
+                                            Excluir Definitivo
+                                        </button>
+                                    </>
                                 )}
                             </div>
                         )}
@@ -1052,36 +1071,18 @@ function AddressListContent() {
                 </div>
 
                 <div className="flex items-center gap-2">
-
                     {(isElder || isServant || isAdmin || isAdminRoleGlobal) && (
-                        <>
-                            <CSVActionButtons
-                                congregationId={congregationId}
-                                cityId={cityId}
-                                territoryId={territoryId}
-                                onImportSuccess={fetchAddresses}
-                            />
-                            <button
-                                onClick={() => {
-                                    const currentPath = window.location.pathname + window.location.search;
-                                    router.push(`/share-setup?ids=${territoryId}&returnUrl=${encodeURIComponent(currentPath)}`);
-                                }}
-                                className="bg-green-600 border border-green-600 text-white hover:bg-green-700 px-3 py-2 rounded-lg shadow-md transition-all active:scale-95 mr-2 flex items-center gap-2 font-bold text-xs uppercase tracking-wider"
-                                title="Gerar Link de Compartilhamento"
-                            >
-                                <LinkIcon className="w-4 h-4" />
-                                Criar Link
-                            </button>
-                            <button
-                                onClick={() => {
-                                    resetForm();
-                                    setIsCreateModalOpen(true);
-                                }}
-                                className="bg-gray-900 border-gray-900 border hover:bg-black dark:bg-surface-highlight dark:hover:bg-slate-800 text-white dark:text-main dark:border-surface-border p-2 rounded-lg shadow-lg transition-all active:scale-95"
-                            >
-                                <Plus className="w-5 h-5" />
-                            </button>
-                        </>
+                        <AddressActionsMenu
+                            congregationId={congregationId}
+                            cityId={cityId}
+                            territoryId={territoryId}
+                            onImportSuccess={fetchAddresses}
+                            onCreateClick={() => setIsCreateModalOpen(true)}
+                            isElder={isElder}
+                            isServant={isServant}
+                            isAdmin={isAdmin}
+                            isAdminRoleGlobal={isAdminRoleGlobal}
+                        />
                     )}
                 </div>
             </header>
@@ -1111,72 +1112,6 @@ function AddressListContent() {
                         <div className="text-center py-12 opacity-50">
                             <Home className="w-12 h-12 mx-auto mb-3 text-gray-300" />
                             <p className="text-gray-400 font-medium">Nenhum endereço cadastrado</p>
-                        </div>
-                    ) : currentView === 'table' ? (
-                        <div className="px-6 pb-6 max-w-6xl mx-auto overflow-hidden">
-                            <div className="bg-surface rounded-2xl border border-surface-border overflow-hidden shadow-sm">
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left text-sm">
-                                        <thead className="bg-surface-highlight border-b border-surface-border text-muted uppercase tracking-wider text-[10px] font-bold">
-                                            <tr>
-                                                <th className="px-4 py-4 w-12 text-center">#</th>
-                                                <th className="px-4 py-4">Endereço</th>
-                                                <th className="px-4 py-4">Morador</th>
-                                                <th className="px-4 py-4">Status</th>
-                                                <th className="px-4 py-4 text-right">Ações</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-surface-border">
-                                            {activeAddresses.map((addr, idx) => (
-                                                <tr key={addr.id} className={`transition-colors group ${(addr.visit_status === 'moved' || (addr as any).visitStatus === 'moved') ? 'bg-blue-50/40 dark:bg-blue-900/20' : 'hover:bg-surface-highlight/50'}`}>
-                                                    <td className="px-4 py-4 text-center font-bold text-muted">{idx + 1}</td>
-                                                    <td className="px-4 py-4">
-                                                        <div className="font-bold text-main">{addr.street}</div>
-                                                        {addr.observations && <div className="text-[10px] text-muted truncate max-w-[150px]">{addr.observations}</div>}
-                                                    </td>
-                                                    <td className="px-4 py-4">
-                                                        <div className="flex flex-col gap-1">
-                                                            {addr.resident_name && <span className="font-semibold text-xs text-main">{addr.resident_name}</span>}
-                                                            <div className="flex flex-wrap gap-1">
-                                                                {addr.gender && (
-                                                                    <span className={`px-1 rounded text-[8px] font-black uppercase ${addr.gender === 'HOMEM' ? 'bg-blue-100 text-blue-700' : addr.gender === 'MULHER' ? 'bg-pink-100 text-pink-700' : 'bg-purple-100 text-purple-700'}`}>
-                                                                        {addr.gender.substring(0, 1)}
-                                                                    </span>
-                                                                )}
-                                                                {addr.is_deaf && <span className="px-1 bg-yellow-100 text-yellow-800 rounded text-[8px] font-black uppercase">S</span>}
-                                                                {addr.is_minor && <span className="px-1 bg-primary-light/50 text-primary-dark rounded text-[8px] font-black uppercase">M</span>}
-                                                            </div>
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-4 py-4">
-                                                        {addr.visit_status && (
-                                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${addr.visit_status === 'contacted' ? 'bg-green-100 text-green-700' :
-                                                                (addr.visit_status === 'moved' || (addr as any).visitStatus === 'moved') ? 'bg-sky-100 text-sky-700' :
-                                                                    addr.visit_status === 'do_not_visit' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'
-                                                                }`}>
-                                                                {addr.visit_status === 'contacted' ? 'Visitado' :
-                                                                    (addr.visit_status === 'moved' || (addr as any).visitStatus === 'moved') ? 'Mudou' :
-                                                                        addr.visit_status === 'do_not_visit' ? 'Não Visitar' : 'Pendente'}
-                                                            </span>
-                                                        )}
-                                                    </td>
-                                                    <td className="px-4 py-4 text-right">
-                                                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                            <button onClick={() => handleOpenMap(addr)} className="p-1.5 text-muted hover:text-primary hover:bg-primary-light/50 rounded-lg"><Navigation className="w-4 h-4" /></button>
-                                                            {(isElder || isServant) && (
-                                                                <>
-                                                                    <button onClick={() => handleEditAddress(addr)} className="p-1.5 text-muted hover:text-main hover:bg-background rounded-lg"><Pencil className="w-4 h-4" /></button>
-                                                                    <button onClick={() => handleDeleteAddress(addr.id)} className="p-1.5 text-muted hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 className="w-4 h-4" /></button>
-                                                                </>
-                                                            )}
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
                         </div>
                     ) : (
                         <div className="px-6 pb-6 space-y-3 max-w-6xl mx-auto">

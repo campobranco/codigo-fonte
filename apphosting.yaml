@@ -1,6 +1,7 @@
 # Settings for Backend (on Cloud Run).
 # See https://firebase.google.com/docs/app-hosting/configure#cloud-run
 runConfig:
+  region: us-central1
   minInstances: 0
   maxInstances: 10
   concurrency: 80
@@ -16,7 +17,7 @@ env:
       - BUILD
       - RUNTIME
   - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-    value: "campo-branco.firebaseapp.com"
+    value: "campo-branco.web.app"
     availability:
       - BUILD
       - RUNTIME
@@ -42,6 +43,18 @@ env:
       - RUNTIME
   - variable: NEXT_PUBLIC_VAPID_PUBLIC_KEY
     value: "BA7he-Uqiclqp1EtSMW9__Z73UyPogRQfUJxPWeJ5HLQ0N2bYxKqdqfMpmZVmCNPPP6GnCDY"
+    availability:
+      - BUILD
+      - RUNTIME
+  
+  - variable: NEXT_PUBLIC_FIREBASE_DATABASE_ID
+    value: "(default)"
+    availability:
+      - BUILD
+      - RUNTIME
+  
+  - variable: NEXT_PUBLIC_ENVIRONMENT
+    value: "production"
     availability:
       - BUILD
       - RUNTIME

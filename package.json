@@ -1,10 +1,10 @@
 {
   "name": "campobranco",
-  "version": "0.6.135-beta",
+  "version": "0.7.18-beta",
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "node --max-old-space-size=4096 node_modules/next/dist/bin/next build",
+    "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "test": "npm run test:unit && npm run test:e2e",
@@ -35,6 +35,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",
+    "@types/google.maps": "^3.58.1",
     "@types/jest": "^30.0.0",
     "@types/node": "^20",
     "@types/react": "^19",

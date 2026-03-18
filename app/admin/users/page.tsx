@@ -39,6 +39,8 @@ import Link from 'next/link';
 import BottomNav from '@/app/components/BottomNav';
 import ConfirmationModal from '@/app/components/ConfirmationModal';
 import { toast } from 'sonner';
+import { updateUser, deleteUser } from '@/lib/services/admin';
+
 
 interface UserProfile {
     id: string;
@@ -168,23 +170,17 @@ export default function AdminUsersPage() {
                 editRoles.includes('ANCIAO') ? 'ANCIAO' :
                     editRoles.includes('SERVO') ? 'SERVO' : 'PUBLICADOR';
 
-            // Envia a requisição para a nova API de update (bypassa o RLS via backend)
-            const response = await fetch('/api/admin/users/update', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    userId: editingUser.id,
-                    name: editName.trim(),
-                    role: legacyRole,
-                    congregation_id: editCongId || null
-                })
+            // Envia a requisição para a nova API client-side de update
+            const result = await updateUser(editingUser.id, {
+                name: editName.trim(),
+                role: legacyRole,
+                congregation_id: editCongId || null
             });
 
-            const resData = await response.json();
-
-            if (!response.ok) {
-                throw new Error(resData.error || 'Erro ao atualizar usuário');
+            if (!result.success) {
+                throw new Error(result.error || 'Erro ao atualizar usuário');
             }
+
 
             // CORREÇÃO DO FALSO POSITIVO:
             // O estado local deve refletir exatamente o que o banco salvou.
@@ -261,17 +257,15 @@ export default function AdminUsersPage() {
         setUpdatingId(userToDelete.id);
         setIsDeleting(true);
         try {
-            const response = await fetch('/api/admin/users/delete', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId: userToDelete.id })
-            });
+            const result = await deleteUser(userToDelete.id);
 
-            const resData = await response.json();
-
-            if (!response.ok) {
-                throw new Error(resData.error || 'Erro ao excluir usuário');
+            if (!result.success) {
+                if (result.code === 'HAS_RELATIONS') {
+                    throw new Error(result.error);
+                }
+                throw new Error(result.error || 'Erro ao excluir usuário');
             }
+
 
             // Atualiza o estado local imediatamente
             setUsers(prev => prev.filter(u => u.id !== userToDelete.id));
@@ -449,7 +443,7 @@ export default function AdminUsersPage() {
 
             {/* CREATE MODAL - Padrão clássico do app (ex: NewPointModal) */}
             {showCreateModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
                     <div className="bg-white rounded-lg w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95 duration-300">
                         <div className="flex justify-between items-center mb-6">
                             <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
@@ -514,7 +508,7 @@ export default function AdminUsersPage() {
 
             {/* EDIT MODAL - Padrão clássico do app */}
             {showEditModal && editingUser && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
                     <div className="bg-white rounded-lg w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95 duration-300">
                         <div className="flex justify-between items-center mb-6">
                             <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">

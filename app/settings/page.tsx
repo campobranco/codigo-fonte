@@ -52,6 +52,7 @@ import {
     Github,
     Trash2,
     Bug,
+    AlertCircle,
 } from 'lucide-react';
 import Link from 'next/link';
 // import NotificationToggle from '@/app/components/NotificationToggle'; // Removed
@@ -109,6 +110,13 @@ export default function SettingsPage() {
         cancelText?: string;
     }>({ isOpen: false, title: '', message: '', onConfirm: () => { } });
 
+    // Delete Account Security States
+    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [confirmEmail, setConfirmEmail] = useState('');
+    const [confirmCongName, setConfirmCongName] = useState('');
+    const [actualCongName, setActualCongName] = useState<string>('');
+    const [isDeleting, setIsDeleting] = useState(false);
+
     // Close menu on click outside
     useEffect(() => {
         const handleClickOutside = () => setOpenMenuId(null);
@@ -124,6 +132,26 @@ export default function SettingsPage() {
             router.push('/sem-congregacao');
         }
     }, [user, loading, congregationId, isAdminRoleGlobal, router]);
+
+    // Fetch Actual Congregation Name for Delete Confirmation
+    useEffect(() => {
+        const fetchCongName = async () => {
+            if (congregationId) {
+                try {
+                    const congRef = doc(db, "congregations", congregationId);
+                    const congSnap = await getDoc(congRef);
+                    if (congSnap.exists()) {
+                        setActualCongName(congSnap.data().name);
+                    }
+                } catch (error) {
+                    console.error("Error fetching cong name:", error);
+                }
+            } else {
+                setActualCongName('Nenhuma');
+            }
+        };
+        fetchCongName();
+    }, [congregationId]);
 
     useEffect(() => {
         if ((canInviteMembers || canManageMembers) && congregationId) {
@@ -372,7 +400,7 @@ export default function SettingsPage() {
                         <div className="flex items-center gap-4">
                             <div className="w-16 h-16 bg-background dark:bg-surface-highlight rounded-full flex items-center justify-center text-muted text-xl font-bold border-2 border-surface dark:border-surface shadow-sm ring-1 ring-surface-border">
                                 {user.photoURL ? (
-                                    <Image src={user.photoURL} alt="Avatar" width={64} height={64} className="rounded-full object-cover" />
+                                    <img src={user.photoURL} alt="Avatar" width={64} height={64} className="rounded-full object-cover w-16 h-16" referrerPolicy="no-referrer" />
                                 ) : (
                                     <User className="w-8 h-8" />
                                 )}
@@ -649,7 +677,7 @@ export default function SettingsPage() {
                                         <div key={member.id} className="flex items-center justify-between p-3 bg-background rounded-lg border border-surface-border">
                                             <div className="flex items-center gap-3">
                                                 <div className="w-10 h-10 bg-surface rounded-full flex items-center justify-center text-muted font-bold border border-surface-border shadow-sm">
-                                                    {member.photoURL ? <Image src={member.photoURL} alt={member.name || 'Avatar'} width={40} height={40} className="rounded-full object-cover" /> : <User className="w-5 h-5" />}
+                                                    {member.photoURL ? <img src={member.photoURL} alt={member.name || 'Avatar'} width={40} height={40} className="rounded-full object-cover w-10 h-10" referrerPolicy="no-referrer" /> : <User className="w-5 h-5" />}
                                                 </div>
                                                 <div>
                                                     <h4 className="font-bold text-sm text-main">{member.name || member.email?.split('@')[0]}</h4>
@@ -830,15 +858,7 @@ export default function SettingsPage() {
                             </div>
                             <Eye className="w-4 h-4 text-muted group-hover:text-primary transition-colors" />
                         </Link>
-                        <Link href="/legal/privacy" className="flex items-center justify-between p-4 hover:bg-background rounded-lg transition-colors group">
-                            <div className="flex items-center gap-3">
-                                <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-gray-500">
-                                    <Shield className="w-5 h-5" />
-                                </div>
-                                <span className="font-bold text-sm text-main">Política de Privacidade</span>
-                            </div>
-                            <Eye className="w-4 h-4 text-muted group-hover:text-primary transition-colors" />
-                        </Link>
+
                         <Link href="/legal/data-usage" className="flex items-center justify-between p-4 hover:bg-background rounded-lg transition-colors group">
                             <div className="flex items-center gap-3">
                                 <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-gray-500">
@@ -857,6 +877,24 @@ export default function SettingsPage() {
                             </div>
                             <Eye className="w-4 h-4 text-muted group-hover:text-primary transition-colors" />
                         </Link>
+                        <Link href="/legal/privacy" className="flex items-center justify-between p-4 hover:bg-background rounded-lg transition-colors group">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-gray-500">
+                                    <Shield className="w-5 h-5" />
+                                </div>
+                                <span className="font-bold text-sm text-main">Política de Privacidade</span>
+                            </div>
+                            <Eye className="w-4 h-4 text-muted group-hover:text-primary transition-colors" />
+                        </Link>
+                        <a href="mailto:campobrancojw@gmail.com" className="flex items-center justify-between p-4 hover:bg-background rounded-lg transition-colors group">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-gray-500">
+                                    <Mail className="w-5 h-5" />
+                                </div>
+                                <span className="font-bold text-sm text-main">Falar com o DPO</span>
+                            </div>
+                            <Eye className="w-4 h-4 text-muted group-hover:text-primary transition-colors" />
+                        </a>
 
                         <hr className="border-surface-border my-2" />
 
@@ -913,31 +951,9 @@ export default function SettingsPage() {
                                 </div>
                                 <button
                                     onClick={() => {
-                                        setConfirmModal({
-                                            isOpen: true,
-                                            title: "EXCLUIR CONTA DEFINITIVAMENTE?",
-                                            message: "Essa ação não pode ser desfeita. Todos os seus dados de perfil e acesso serão apagados permanentemente da plataforma.",
-                                            variant: 'danger',
-                                            confirmText: "Excluir Minha Conta",
-                                            onConfirm: async () => {
-                                                setConfirmModal(prev => ({ ...prev, isOpen: false }));
-                                                try {
-                                                    // 1. Delete Public Profile
-                                                    if (user?.uid) {
-                                                        const userRef = doc(db, "users", user.uid);
-                                                        await deleteDoc(userRef);
-                                                    }
-
-                                                    // 2. Logout
-                                                    await authLogout();
-                                                    toast.success("Conta excluída. Até logo!");
-                                                    router.push('/login');
-                                                } catch (error: any) {
-                                                    console.error("Delete account error:", error);
-                                                    toast.error("Erro ao excluir conta. Tente novamente.");
-                                                }
-                                            }
-                                        });
+                                        setIsDeleteModalOpen(true);
+                                        setConfirmEmail('');
+                                        setConfirmCongName('');
                                     }}
                                     className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg flex items-center gap-2 transition-colors shadow-lg shadow-red-600/20 whitespace-nowrap"
                                 >
@@ -961,14 +977,11 @@ export default function SettingsPage() {
                             <span className="text-xs font-semibold">Projeto Open Source <span className="text-[10px] opacity-60 font-normal">(MIT)</span></span>
                         </div>
 
-                        <Image
+                        <img
                             src="https://img.shields.io/github/stars/campobranco/codigo-fonte?style=social"
                             alt="GitHub Repo stars"
-                            width={0}
-                            height={0}
                             style={{ width: 'auto', height: '20px' }}
                             className="grayscale group-hover:grayscale-0 transition-all duration-300"
-                            unoptimized
                         />
                     </a>
 
@@ -981,7 +994,7 @@ export default function SettingsPage() {
             {/* Bottom Navigation */}
             <BottomNav />
 
-            {/* Confirmation Modal */}
+            {/* Confirmation Modal (Generic) */}
             <ConfirmationModal
                 isOpen={confirmModal.isOpen}
                 onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
@@ -992,6 +1005,101 @@ export default function SettingsPage() {
                 confirmText={confirmModal.confirmText}
                 cancelText={confirmModal.cancelText}
             />
-        </div >
+
+            {/* Delete Account Modal (Enhanced Security) */}
+            {isDeleteModalOpen && (
+                <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
+                    <div className="bg-surface rounded-2xl w-full max-w-md p-8 shadow-2xl animate-in zoom-in-95 duration-300 relative border border-surface-border">
+                        <button
+                            onClick={() => setIsDeleteModalOpen(false)}
+                            className="absolute top-4 right-4 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                        >
+                            <X className="w-5 h-5 text-muted" />
+                        </button>
+
+                        <div className="flex justify-center mb-6">
+                            <div className="w-20 h-20 rounded-full bg-red-50 dark:bg-red-900/20 flex items-center justify-center text-red-500">
+                                <AlertCircle className="w-10 h-10" />
+                            </div>
+                        </div>
+
+                        <h2 className="text-2xl font-bold text-main text-center mb-3">EXCLUIR CONTA DEFINITIVAMENTE?</h2>
+                        <p className="text-muted text-center mb-8 text-sm leading-relaxed">
+                            Esta ação é irreversível. Para confirmar, digite as informações abaixo exatamente como aparecem no seu perfil.
+                        </p>
+
+                        <div className="space-y-5 mb-8">
+                            <div>
+                                <label className="block text-xs font-bold text-muted uppercase tracking-wider mb-2 ml-1">Seu E-mail</label>
+                                <input
+                                    type="email"
+                                    value={confirmEmail}
+                                    onChange={(e) => setConfirmEmail(e.target.value)}
+                                    placeholder={user?.email || "seu@email.com"}
+                                    className="w-full bg-background border border-surface-border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-red-500/50 transition-all"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-muted uppercase tracking-wider mb-2 ml-1">Sua Congregação</label>
+                                <input
+                                    type="text"
+                                    value={confirmCongName}
+                                    onChange={(e) => setConfirmCongName(e.target.value)}
+                                    placeholder={actualCongName || "Nome da congregação"}
+                                    className="w-full bg-background border border-surface-border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-red-500/50 transition-all"
+                                />
+                                <p className="text-[10px] text-muted mt-1.5 ml-1 opacity-60">
+                                    Dica: Digite <strong>"{actualCongName}"</strong>
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-4">
+                            <button
+                                onClick={() => setIsDeleteModalOpen(false)}
+                                disabled={isDeleting}
+                                className="flex-1 bg-surface-hover hover:bg-surface-active text-main py-4 rounded-xl font-bold text-sm transition-all border border-surface-border disabled:opacity-50"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    setIsDeleting(true);
+                                    try {
+                                        if (user?.uid) {
+                                            const userRef = doc(db, "users", user.uid);
+                                            await deleteDoc(userRef);
+                                        }
+                                        await authLogout();
+                                        toast.success("Conta excluída com sucesso.");
+                                        router.push('/login');
+                                    } catch (error: any) {
+                                        console.error("Delete error:", error);
+                                        toast.error("Erro ao excluir conta: " + error.message);
+                                        setIsDeleting(false);
+                                    }
+                                }}
+                                disabled={
+                                    isDeleting ||
+                                    confirmEmail.toLowerCase().trim() !== user?.email?.toLowerCase().trim() ||
+                                    confirmCongName.toLowerCase().trim() !== actualCongName.toLowerCase().trim()
+                                }
+                                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-4 rounded-xl font-bold text-sm transition-all shadow-lg shadow-red-600/20 disabled:grayscale disabled:opacity-30 flex items-center justify-center gap-2"
+                            >
+                                {isDeleting ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        Apagando...
+                                    </>
+                                ) : (
+                                    "Excluir Agora"
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
     );
 }

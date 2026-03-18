@@ -21,10 +21,17 @@ import {
     LogOut,
     AlertCircle
 } from 'lucide-react';
-import MapView from '@/app/components/MapView';
-import BottomNav from '@/app/components/BottomNav';
-import NewPointModal from '@/app/components/Witnessing/NewPointModal';
-import EditPointModal from '@/app/components/Witnessing/EditPointModal';
+import dynamic from 'next/dynamic';
+
+import { MapSkeleton } from '@/app/components/Skeleton';
+
+const MapView = dynamic(() => import('@/app/components/MapView'), {
+    loading: () => <MapSkeleton />,
+    ssr: false
+});
+const BottomNav = dynamic(() => import('@/app/components/BottomNav'), { ssr: false });
+const NewPointModal = dynamic(() => import('@/app/components/Witnessing/NewPointModal'));
+const EditPointModal = dynamic(() => import('@/app/components/Witnessing/EditPointModal'));
 import UserAvatar from '@/app/components/UserAvatar';
 import AssignedUserBadge from '@/app/components/AssignedUserBadge';
 import ConfirmationModal from '@/app/components/ConfirmationModal';
@@ -34,6 +41,7 @@ import Link from 'next/link';
 import { useAuth } from '@/app/context/AuthContext';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { checkInWitnessingPoint, deleteWitnessingPoint } from '@/lib/services/witnessing';
 
 interface WitnessingPoint {
     id: string;
@@ -117,8 +125,9 @@ function WitnessingPointListContent() {
 
         try {
             const snap = await (async () => {
+                // Nome correto da coleção no Firestore é 'witnessing_points' (snake_case)
                 const q = query(
-                    collection(db, 'witnessingPoints'),
+                    collection(db, 'witnessing_points'),
                     where('congregationId', '==', congregationId),
                     where('cityId', '==', cityId),
                     orderBy('name')
@@ -156,8 +165,9 @@ function WitnessingPointListContent() {
         fetchPoints();
 
         // onSnapshot: Firestore escuta mudanças em tempo real nos pontos de testemunho
+        // Nome correto da coleção no Firestore é 'witnessing_points' (snake_case)
         const pointsQuery = query(
-            collection(db, 'witnessingPoints'),
+            collection(db, 'witnessing_points'),
             where('congregationId', '==', congregationId),
             where('cityId', '==', cityId),
             orderBy('name')
@@ -193,7 +203,8 @@ function WitnessingPointListContent() {
                         : 'AVAILABLE';
 
                     try {
-                        await updateDoc(doc(db, 'witnessingPoints', point.id), {
+                        // Nome correto da coleção no Firestore é 'witnessing_points' (snake_case)
+                        await updateDoc(doc(db, 'witnessing_points', point.id), {
                             activeUsers: validUsers,
                             status: newStatus
                         });
@@ -226,8 +237,8 @@ function WitnessingPointListContent() {
             onConfirm: async () => {
                 setConfirmModal(prev => ({ ...prev, isOpen: false }));
                 try {
-                    // Deleta documento do Firestore
-                    await deleteDoc(doc(db, 'witnessingPoints', id));
+                    const result = await deleteWitnessingPoint(id);
+                    if (!result.success) throw new Error(result.error);
                     toast.success("Ponto excluído com sucesso.");
                 } catch (error) {
                     console.error("Error deleting point:", error);
@@ -305,18 +316,11 @@ function WitnessingPointListContent() {
                 const otherStatus = (otherActive.length > 0 || otherLegacy.length > 0) ? 'OCCUPIED' : 'AVAILABLE';
 
                 try {
-                    // Checkout do ponto anterior via API (para evitar bloqueio de RLS)
-                    await fetch('/api/witnessing/check-in', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            id: otherPoint.id,
-                            updates: {
-                                active_users: otherActive,
-                                current_publishers: otherLegacy,
-                                status: otherStatus
-                            }
-                        })
+                    // Checkout do ponto anterior via serviço (cliente)
+                    await checkInWitnessingPoint(otherPoint.id, {
+                        activeUsers: otherActive,
+                        currentPublishers: otherLegacy,
+                        status: otherStatus
                     });
 
                     await executeCheckInOut(point, false);
@@ -357,27 +361,21 @@ function WitnessingPointListContent() {
 
         const newStatus = (newPublishers.length > 0 || newActiveUsers.length > 0) ? 'OCCUPIED' : 'AVAILABLE';
 
-        try {
-            const updates = {
-                currentPublishers: newPublishers,
-                activeUsers: newActiveUsers,
-                status: newStatus
-            };
+                try {
+                    const updates = {
+                        currentPublishers: newPublishers,
+                        activeUsers: newActiveUsers,
+                        status: newStatus
+                    };
 
-            const response = await fetch('/api/witnessing/check-in', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: point.id, updates })
-            });
+                    const result = await checkInWitnessingPoint(point.id, updates);
 
-            const resData = await response.json();
-
-            if (!response.ok) {
-                throw new Error(resData.error || 'Erro ao processar check-in');
-            }
-        } catch (error: any) {
-            toast.error(`Erro ao salvar: ${error.message}`);
-        }
+                    if (!result.success) {
+                        throw new Error(result.error || 'Erro ao processar check-in');
+                    }
+                } catch (error: any) {
+                    toast.error(`Erro ao salvar: ${error.message}`);
+                }
     };
 
 

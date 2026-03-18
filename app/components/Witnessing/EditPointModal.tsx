@@ -6,9 +6,8 @@
 
 import { useState, useEffect } from 'react';
 import { X, Pencil, Loader2 } from 'lucide-react';
-import { db } from '@/lib/firebase';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { toast } from 'sonner';
+import { updateWitnessingPointDetails } from '@/lib/services/witnessing';
 
 // Tipagem com campos camelCase (padrão Firestore)
 interface WitnessingPoint {
@@ -60,14 +59,15 @@ export default function EditPointModal({ isOpen, onClose, point, cityName, onSuc
 
         setLoading(true);
         try {
-            await updateDoc(doc(db, 'witnessingPoints', point.id), {
+            const result = await updateWitnessingPointDetails(point.id, {
                 name: name.trim(),
                 address: address.trim(),
-                googleMapsLink: googleMapsLink.trim() || null,
-                wazeLink: wazeLink.trim() || null,
-                schedule: schedule.trim() || null,
-                updatedAt: serverTimestamp(),
+                latitude: 0,
+                longitude: 0,
+                schedule: schedule.trim() || '',
             });
+
+            if (!result.success) throw new Error(result.error);
 
             toast.success("Ponto atualizado com sucesso!");
             if (onSuccess) onSuccess();
